@@ -34,8 +34,9 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
     if (loginRes.requiresMfa) {
       throw new Error('Unexpected MFA prompt for standard member');
     }
+    const successRes = loginRes as Extract<typeof loginRes, { requiresMfa: false }>;
 
-    const { accessToken: a1, refreshToken: r1 } = loginRes;
+    const { accessToken: a1, refreshToken: r1 } = successRes;
     expect(a1).toBeDefined();
     expect(r1).toBeDefined();
 
@@ -48,7 +49,7 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
     // 4. Session should still be active with R2
     const sessions = await authService.getUserSessions(reg.user.id);
     expect(sessions.length).toBe(1);
-    expect(sessions[0].id).toBe(loginRes.session.id);
+    expect(sessions[0].id).toBe(successRes.session.id);
   });
 
   it('ACCEPTANCE CRITERIA: Reused refresh tokens revoke the session (Replay Attack Defense)', async () => {
@@ -74,7 +75,8 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
     );
 
     if (loginRes.requiresMfa) throw new Error('Unexpected MFA');
-    const r1 = loginRes.refreshToken;
+    const successLogin = loginRes as Extract<typeof loginRes, { requiresMfa: false }>;
+    const r1 = successLogin.refreshToken;
 
     // 2. Legitimate user rotates R1 to R2
     const rotation1 = await authService.rotateRefreshToken(r1, '127.0.0.1');

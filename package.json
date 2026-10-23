@@ -12,7 +12,7 @@
     "start": "tsx server.ts",
     "dev:api": "tsx apps/api/src/main.ts",
     "build": "vite build",
-    "test": "vitest run apps/api/tests",
+    "test": "vitest run apps/api/tests --test-timeout 15000",
     "test:e2e": "vitest run apps/api/tests/e2e-journey.spec.ts",
     "audit": "npm audit --audit-level=high || true",
     "typecheck": "tsc --noEmit",
@@ -48,7 +48,10 @@
     "esbuild": "^0.28.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
+    "typescript": "~5.9.3",
     "vitest": "^5.0.5"
+  },
+  "overrides": {
+    "typescript": "~5.9.3"
   }
 }

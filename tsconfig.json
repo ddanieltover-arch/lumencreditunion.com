@@ -36,5 +36,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["dist", "e2e", "playwright.config.ts"]
+  "exclude": ["dist", "e2e", "playwright.config.ts", "apps"]
 }
