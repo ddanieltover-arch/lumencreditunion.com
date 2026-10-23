@@ -13,7 +13,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@lumenfield/shared": "workspace:*",
+    "@lumenfield/shared": "file:../shared",
     "@prisma/client": "^5.19.0"
   },
   "devDependencies": {

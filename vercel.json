@@ -1,0 +1,30 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "web": {
+      "root": ".",
+      "framework": "vite"
+    },
+    "api": {
+      "root": "apps/api",
+      "framework": "express",
+      "entrypoint": "src/vercel.ts",
+      "installCommand": "cd ../.. && npm install --legacy-peer-deps"
+    }
+  },
+  "rewrites": [
+    { "source": "/health", "destination": { "service": "api" } },
+    { "source": "/config", "destination": { "service": "api" } },
+    { "source": "/countries", "destination": { "service": "api" } },
+    { "source": "/countries/(.*)", "destination": { "service": "api" } },
+    { "source": "/auth/(.*)", "destination": { "service": "api" } },
+    { "source": "/admin/(.*)", "destination": { "service": "api" } },
+    { "source": "/kyc/(.*)", "destination": { "service": "api" } },
+    { "source": "/wallet/(.*)", "destination": { "service": "api" } },
+    { "source": "/transfers/(.*)", "destination": { "service": "api" } },
+    { "source": "/cards", "destination": { "service": "api" } },
+    { "source": "/cards/(.*)", "destination": { "service": "api" } },
+    { "source": "/loans/(.*)", "destination": { "service": "api" } },
+    { "source": "/(.*)", "destination": { "service": "web" } }
+  ]
+}

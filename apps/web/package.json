@@ -10,8 +10,8 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@lumenfield/shared": "workspace:*",
-    "@lumenfield/db": "workspace:*",
+    "@lumenfield/shared": "file:../../packages/shared",
+    "@lumenfield/db": "file:../../packages/db",
     "lucide-react": "^0.475.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
