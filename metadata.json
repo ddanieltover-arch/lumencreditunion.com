@@ -1,0 +1,8 @@
+{
+  "name": "Lumenfield",
+  "description": "Private financial sandbox and multi-currency wallet platform with member transfers, virtual cards, loan applications, and administrative double-entry ledger funding.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

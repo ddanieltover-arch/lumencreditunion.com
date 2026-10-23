@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: 'Sora', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --color-lumen-teal: #0A3D3F;
+  --color-lumen-teal-dark: #072F30;
+  --color-lumen-teal-hover: #0F5557;
+  --color-lumen-teal-active: #0A4F4A;
+  --color-lumen-teal-accent: #0F766E;
+  --color-lumen-dark: #0E1B1F;
+  --color-lumen-gold: #F5B942;
+  --color-lumen-gold-light: #FFF1CC;
+  --color-lumen-gold-border: #F0D58A;
+  --color-lumen-gold-text: #5A4100;
+  --color-lumen-surface: #F4F7F6;
+  --color-lumen-surface-tint: #E3F3F1;
+  --color-lumen-border: #DCE5E3;
+  --color-lumen-border-strong: #BCCAC8;
+  --color-lumen-muted: #4A5B60;
+  --color-lumen-subtle: #8FA5A3;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: #0E1B1F;
+  background-color: #F4F7F6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-display);
+}
+
+/* Custom scrollbars for clean dashboards */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(10, 61, 63, 0.2);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(10, 61, 63, 0.4);
+}
+
+/* Accessibility: High contrast visible focus indicators */
+*:focus-visible {
+  outline: 2px solid #0F766E !important;
+  outline-offset: 2px !important;
+}
+
+/* Accessibility: Prefers Reduced Motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

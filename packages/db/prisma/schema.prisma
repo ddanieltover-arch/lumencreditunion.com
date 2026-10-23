@@ -1,0 +1,321 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  MEMBER
+  SUPER_ADMIN
+}
+
+enum MemberStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  SUSPENDED
+}
+
+enum TransactionSource {
+  TEST
+  BANK
+  CRYPTO
+  DEPOSIT
+  TRANSFER
+  LOAN_DISBURSEMENT
+  CARD_PURCHASE
+  FEE
+  REVERSAL
+}
+
+enum TransactionStatus {
+  POSTED
+  VOIDED
+  PENDING_APPROVAL
+}
+
+enum AccountType {
+  MEMBER_WALLET
+  SANDBOX_FUNDING_POOL
+  FEE
+  LOAN_RECEIVABLE
+  EXTERNAL_CLEARING
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+enum EntryDirection {
+  DEBIT
+  CREDIT
+}
+
+enum KycSubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_MORE_INFO
+}
+
+enum KycDocumentType {
+  PASSPORT
+  ID_CARD
+  RESIDENCE_PERMIT
+  DRIVERS_LICENSE
+}
+
+enum KycDocumentSide {
+  FRONT
+  BACK
+  COMBINED
+}
+
+model User {
+  id                  String         @id @default(uuid())
+  email               String         @unique
+  passwordHash        String
+  role                Role           @default(MEMBER)
+  emailVerified       Boolean        @default(false)
+  failedLoginAttempts Int            @default(0)
+  lockedUntil         DateTime?
+  mfaEnabled          Boolean        @default(false)
+  mfaSecret           String?
+  mfaRecoveryCodes    String[]       @default([])
+  isActive            Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  memberProfile         MemberProfile?
+  auditLogs             AuditLog[]
+  sessions              Session[]
+  passwordResetTokens   PasswordResetToken[]
+  emailTokens           EmailVerificationToken[]
+  transactionsInitiated LedgerTransaction[] @relation("TransactionCreator")
+  transactionsApproved  LedgerTransaction[] @relation("TransactionApprover")
+
+  @@map("users")
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String
+  deviceInfo       String
+  ipAddress        String
+  userAgent        String?
+  isRevoked        Boolean   @default(false)
+  revokedAt        DateTime?
+  expiresAt        DateTime
+  createdAt        DateTime  @default(now())
+  lastActiveAt     DateTime  @default(now())
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+model MemberProfile {
+  id          String        @id @default(uuid())
+  userId      String        @unique
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  firstName   String
+  lastName    String
+  countryCode String
+  country     Country       @relation(fields: [countryCode], references: [code])
+  status      MemberStatus  @default(PENDING_VERIFICATION)
+  phone       String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  accounts       Account[]
+  kycSubmissions KycSubmission[]
+
+  @@map("member_profiles")
+}
+
+model Country {
+  id               String   @id @default(uuid())
+  code             String   @unique // ISO 3166-1 alpha-2, e.g. "US", "CA", "GB"
+  name             String
+  currency         String   // ISO 4217, e.g. "USD", "GBP", "EUR"
+  currencySymbol   String   // "$", "£", "€"
+  enabled          Boolean  @default(true)
+  acceptedIdTypes  String[] // Array of accepted KYC ID types
+  autoLoansEnabled Boolean  @default(true)
+  mortgageEnabled  Boolean  @default(true)
+  cardsEnabled     Boolean  @default(true)
+  isSanctioned     Boolean  @default(false)
+  sanctionReason   String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  memberProfiles   MemberProfile[]
+
+  @@map("countries")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actorId     String
+  actorRole   Role
+  actor       User     @relation(fields: [actorId], references: [id])
+  action      String   // E.g. "ADMIN_FUND_WALLET"
+  targetType  String   // E.g. "WALLET", "MEMBER_PROFILE"
+  targetId    String
+  beforeState Json?
+  afterState  Json?
+  ipAddress   String
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([targetId])
+  @@map("audit_logs")
+}
+
+model IdempotencyKey {
+  id             String    @id @default(uuid())
+  key            String    @unique
+  route          String
+  requestHash    String
+  responseStatus Int?
+  responseBody   Json?
+  lockedAt       DateTime?
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+
+  @@index([key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+model Account {
+  id                 String        @id @default(uuid())
+  memberId           String?
+  member             MemberProfile? @relation(fields: [memberId], references: [id])
+  accountType        AccountType
+  currency           String
+  name               String
+  cachedBalanceMinor BigInt        @default(0) // Cached balance updated atomically with ledger entries
+  allowNegative      Boolean       @default(false)
+  isSystem           Boolean       @default(false)
+  createdAt          DateTime      @default(now())
+
+  ledgerEntries      LedgerEntry[]
+
+  @@index([memberId, currency])
+  @@map("accounts")
+}
+
+model LedgerTransaction {
+  id                     String            @id @default(uuid())
+  transactionType        String            @default("GENERAL") // FUNDING, TRANSFER, PAYMENT, etc.
+  status                 TransactionStatus @default(POSTED)
+  reference              String            @unique
+  idempotencyKey         String            @unique
+  description            String
+  currency               String
+  source                 TransactionSource @default(TEST)
+  metadata               Json?             // Transaction metadata & context
+  depositReference       String?           // Mandatory if source=DEPOSIT/BANK in PRODUCTION_MODE
+  createdById            String
+  createdBy              User              @relation("TransactionCreator", fields: [createdById], references: [id])
+  secondApprovedById     String?           // Mandatory if REQUIRE_SECOND_APPROVER=true
+  secondApprovedBy       User?             @relation("TransactionApprover", fields: [secondApprovedById], references: [id])
+  createdAt              DateTime          @default(now())
+
+  entries                LedgerEntry[]
+
+  @@index([reference])
+  @@index([idempotencyKey])
+  @@map("ledger_transactions")
+}
+
+model LedgerEntry {
+  id            String         @id @default(uuid())
+  transactionId String
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  accountId     String
+  account       Account        @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  direction     EntryDirection
+  amountMinor   BigInt         // Stored in integer minor units (cents/pence). Never float!
+  currency      String
+  createdAt     DateTime       @default(now())
+
+  // Double-entry entries are strictly immutable. Corrections must be new reversing entries.
+  @@index([transactionId])
+  @@index([accountId])
+  @@map("ledger_entries")
+}
+
+model KycSubmission {
+  id                   String              @id @default(uuid())
+  memberId             String
+  member               MemberProfile       @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  status               KycSubmissionStatus @default(PENDING)
+  countryCode          String
+  documentType         KycDocumentType
+  sanctionsCheckPassed Boolean             @default(true)
+  sanctionsReferenceId String?
+  reviewerNote         String?
+  rejectionReason      String?
+  reviewedById         String?
+  reviewedAt           DateTime?
+  submittedAt          DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  documents            KycDocument[]
+
+  @@index([memberId])
+  @@index([status])
+  @@map("kyc_submissions")
+}
+
+model KycDocument {
+  id             String          @id @default(uuid())
+  submissionId   String
+  submission     KycSubmission   @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  type           KycDocumentType
+  fileKey        String          // Encrypted storage key in private bucket
+  checksum       String          // SHA-256
+  fileName       String
+  fileSize       Int
+  mimeType       String
+  side           KycDocumentSide @default(FRONT)
+  uploadedAt     DateTime        @default(now())
+
+  @@index([submissionId])
+  @@map("kyc_documents")
+}

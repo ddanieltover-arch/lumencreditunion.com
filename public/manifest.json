@@ -1,0 +1,39 @@
+{
+  "id": "/",
+  "name": "Lumenfield - Financial Sandbox",
+  "short_name": "Lumenfield",
+  "description": "Private financial sandbox and multi-currency wallet platform with member transfers, virtual cards, loan applications, and administrative double-entry ledger funding.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "theme_color": "#0A3D3F",
+  "background_color": "#F4F7F6",
+  "categories": ["finance", "utilities"],
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
