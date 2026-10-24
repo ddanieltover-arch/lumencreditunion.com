@@ -193,6 +193,9 @@ export class AuthService {
    */
   async register(input: RegisterUserInput, ipAddress: string, userAgent?: string): Promise<{
     user: Omit<UserRecord, 'passwordHash' | 'mfaSecret' | 'mfaRecoveryCodes'>;
+    accessToken: string;
+    refreshToken: string;
+    session: { id: string; createdAt: string; deviceInfo: string };
     verificationToken?: string;
     message: string;
   }> {
@@ -268,14 +271,20 @@ export class AuthService {
       userAgent,
     });
 
-    const { passwordHash: _, mfaSecret: __, mfaRecoveryCodes: ___, ...safeUser } = user;
+    // Issue a session immediately so new members land on their dashboard
+    const sessionResult = await this.createSessionAndIssueTokens(
+      user,
+      ipAddress,
+      userAgent || 'Unknown Client',
+    );
+
     return {
-      user: safeUser,
+      ...sessionResult,
       // Only expose raw token in sandbox (testers); live users get email instead
       verificationToken: this.configService.isSandbox ? verificationToken : undefined,
       message: this.configService.isSandbox
         ? 'Account created and verified (sandbox).'
-        : 'Account created. Please check your email to verify your address before signing in.',
+        : 'Account created. Check your email to verify your address when you can.',
     };
   }
 
@@ -398,13 +407,6 @@ export class AuthService {
     // Reset failed attempts on valid password
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
-
-    // Live mode: require verified email before issuing a session
-    if (!this.configService.isSandbox && !user.emailVerified) {
-      throw new Error(
-        'Email address is not verified. Please check your inbox for the verification link.',
-      );
-    }
 
     // 3. Multi-Factor Authentication check
     // If MFA is enabled OR if user is SUPER_ADMIN (where MFA is strictly mandatory)

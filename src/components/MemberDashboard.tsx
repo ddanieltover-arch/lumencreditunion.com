@@ -67,9 +67,7 @@ export const MemberDashboard: React.FC = () => {
     setMemberTab,
     setCurrentView,
     setAdminTab,
-    members,
     activeMember,
-    setActiveMemberId,
     transactions,
     loanApplications,
     sendTransfer,
@@ -420,26 +418,19 @@ export const MemberDashboard: React.FC = () => {
 
           {/* Member Profile Bottom Box */}
           <div className="flex flex-col gap-3">
-            {/* Member selector */}
             <div className="p-3.5 rounded-xl bg-[#0F5557] text-[13px] leading-snug text-[#C9DEDC] flex flex-col gap-1.5 border border-[#2D7A77]/50">
               <div className="flex items-center justify-between text-xs">
                 <span>Signed in as</span>
                 <span className="font-mono text-[10px] bg-[#0A3D3F] px-1.5 py-0.5 rounded text-[#F5B942]">
-                  {activeMember.id}
+                  {activeMember.id.slice(0, 8)}
                 </span>
               </div>
-              <select
-                aria-label="Select active member"
-                value={activeMember.id}
-                onChange={(e) => setActiveMemberId(e.target.value)}
-                className="bg-[#0A3D3F] text-white font-semibold rounded-lg px-2 py-1.5 text-xs border border-[#2D7A77] outline-none cursor-pointer"
-              >
-                {members.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name} ({m.countryCode})
-                  </option>
-                ))}
-              </select>
+              <div className="font-semibold text-white text-sm">
+                {currentUser?.fullName || activeMember.name}
+              </div>
+              <div className="text-[11px] text-[#8FA5A3] truncate">
+                {currentUser?.email || activeMember.email}
+              </div>
             </div>
 
             {/* Quick Link to Admin & Home */}

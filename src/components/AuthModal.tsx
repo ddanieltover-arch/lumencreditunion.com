@@ -140,12 +140,16 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         dateOfBirth,
         role: 'MEMBER',
       });
-      showToast(`Account registered for ${res.user.fullName}.`, 'success');
-      setInfoMsg(
-        res.message ||
-          'Account created. Check your email for a verification link before signing in.',
-      );
-      setMode('login');
+      showToast(`Welcome, ${res.user.fullName}! Your account is ready.`, 'success');
+      if (res.accessToken) {
+        onClose();
+      } else {
+        setInfoMsg(
+          res.message ||
+            'Account created. Check your email for a verification link before signing in.',
+        );
+        setMode('login');
+      }
     } catch (err: any) {
       setErrorMsg(err.message || 'Registration failed. Please check form inputs.');
     } finally {

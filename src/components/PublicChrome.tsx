@@ -19,7 +19,6 @@ export const PublicChrome: React.FC<PublicChromeProps> = ({
     currentUser,
     setCurrentView,
     openAuthModal,
-    openSecurityModal,
     openTermsModal,
     openPrivacyModal,
     logoutUser,
@@ -104,22 +103,13 @@ export const PublicChrome: React.FC<PublicChromeProps> = ({
 
             <div className="flex items-center gap-3">
               {currentUser ? (
-                <>
-                  <button
-                    type="button"
-                    onClick={openSecurityModal}
-                    className="inline-flex items-center justify-center min-h-[44px] px-5 rounded-[10px] border border-[#5E9A97] text-white hover:bg-[#0A3D3F] transition-all font-semibold text-[15px] cursor-pointer"
-                  >
-                    Security & MFA
-                  </button>
-                  <button
-                    type="button"
-                    onClick={logoutUser}
-                    className="inline-flex items-center justify-center min-h-[44px] px-5 rounded-[10px] bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] transition-all font-semibold text-[15px] shadow-sm cursor-pointer"
-                  >
-                    Sign out
-                  </button>
-                </>
+                <button
+                  type="button"
+                  onClick={() => void logoutUser()}
+                  className="inline-flex items-center justify-center min-h-[44px] px-5 rounded-[10px] bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] transition-all font-semibold text-[15px] shadow-sm cursor-pointer"
+                >
+                  Sign out
+                </button>
               ) : (
                 <>
                   <button
@@ -127,14 +117,14 @@ export const PublicChrome: React.FC<PublicChromeProps> = ({
                     onClick={() => openAuthModal('login')}
                     className="inline-flex items-center justify-center min-h-[44px] px-5 rounded-[10px] border border-[#5E9A97] text-white hover:bg-[#0A3D3F] transition-all font-semibold text-[15px] cursor-pointer"
                   >
-                    Sign in
+                    Log in
                   </button>
                   <button
                     type="button"
                     onClick={() => openAuthModal('register')}
                     className="inline-flex items-center justify-center min-h-[44px] px-5 rounded-[10px] bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] transition-all font-semibold text-[15px] shadow-sm cursor-pointer"
                   >
-                    Open an Account
+                    Sign up
                   </button>
                 </>
               )}
@@ -216,7 +206,7 @@ export const PublicChrome: React.FC<PublicChromeProps> = ({
                 }}
                 className="w-full inline-flex items-center justify-center min-h-[48px] px-5 rounded-xl bg-[#F5B942] text-[#0E1B1F] font-semibold text-[15px] cursor-pointer"
               >
-                Open an Account
+                Sign up
               </button>
               <button
                 type="button"
@@ -226,7 +216,7 @@ export const PublicChrome: React.FC<PublicChromeProps> = ({
                 }}
                 className="w-full inline-flex items-center justify-center min-h-[48px] px-5 rounded-xl border border-[#5E9A97] text-white font-semibold text-[15px] cursor-pointer"
               >
-                Sign in
+                Log in
               </button>
             </>
           )}

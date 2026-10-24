@@ -32,11 +32,13 @@ import {
 import {
   INITIAL_MEMBERS,
   INITIAL_TRANSACTIONS,
-  INITIAL_LOAN_APPLICATION,
+  INITIAL_LOAN_APPLICATIONS,
   INITIAL_LEDGER_POSTINGS,
   INITIAL_RECENT_FUNDING,
   INITIAL_AUDIT_LOG,
   COUNTRIES,
+  LANDING_TEASER_MEMBER,
+  createMemberFromAuthUser,
 } from '../data/mockData';
 
 interface ToastInfo {
@@ -185,7 +187,7 @@ interface AppContextType {
   completeMfaLogin: (params: { mfaTicket: string; totpCode: string }) => Promise<any>;
   rotateTokens: () => Promise<any>;
   registerUser: (params: any) => Promise<any>;
-  logoutUser: () => Promise<void>;
+  logoutUser: (options?: { redirectToLanding?: boolean; silent?: boolean }) => Promise<void>;
   downloadStatement: (format: 'csv' | 'pdf', currency?: string) => Promise<void>;
 
   convertCurrency: (from: Currency, to: Currency, amount: number) => { success: boolean; message: string };
@@ -243,12 +245,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [adminTab, setAdminTab] = useState<AdminTab>('fund_wallet');
 
   const [members, setMembers] = useState<MemberProfile[]>(INITIAL_MEMBERS);
-  const [activeMemberId, setActiveMemberId] = useState<string>('LF-000124');
+  const [activeMemberId, setActiveMemberId] = useState<string>('');
 
   const [transactions, setTransactions] = useState<Transaction[]>(INITIAL_TRANSACTIONS);
-  const [loanApplications, setLoanApplications] = useState<LoanApplication[]>([
-    INITIAL_LOAN_APPLICATION,
-  ]);
+  const [loanApplications, setLoanApplications] = useState<LoanApplication[]>(
+    INITIAL_LOAN_APPLICATIONS,
+  );
+
+  const ensureMemberForUser = (user: {
+    id: string;
+    email: string;
+    fullName: string;
+    countryCode: string;
+  }) => {
+    setMembers((prev) => {
+      if (prev.some((m) => m.id === user.id || m.email.toLowerCase() === user.email.toLowerCase())) {
+        return prev;
+      }
+      return [...prev, createMemberFromAuthUser(user)];
+    });
+    setActiveMemberId(user.id);
+  };
   const [ledgerPostings, setLedgerPostings] = useState<LedgerPosting[]>(INITIAL_LEDGER_POSTINGS);
   const [recentFunding, setRecentFunding] = useState<FundingRecord[]>(INITIAL_RECENT_FUNDING);
   const [auditLog, setAuditLog] = useState<AuditLogEntry[]>(INITIAL_AUDIT_LOG);
@@ -343,14 +360,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
   }, []);
 
-  const [currentUser, setCurrentUser] = useState<AppContextType['currentUser']>({
-    id: '00000000-0000-0000-0000-000000000002',
-    email: 'amara.o@lumenfield.test',
-    fullName: 'Amara Okafor',
-    role: 'MEMBER',
-    countryCode: 'US',
-    mfaEnabled: false,
-  });
+  const [currentUser, setCurrentUser] = useState<AppContextType['currentUser']>(null);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -422,6 +432,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             if (meRes.ok) {
               const meData = await meRes.json();
               setCurrentUser(meData.user);
+              if (meData.user) {
+                ensureMemberForUser(meData.user);
+              }
+              if (meData.user?.role === 'SUPER_ADMIN') {
+                setCurrentView('admin');
+              } else {
+                setCurrentView('member');
+              }
               return;
             }
           } else {
@@ -430,9 +448,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        // Live mode: no auto-login — users must sign in explicitly
+        // No valid session — stay signed out on the landing page
+        setCurrentUser(null);
       } catch (err) {
         console.debug('[AppContext] Init session:', err);
+        setCurrentUser(null);
       }
     };
 
@@ -472,6 +492,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRefreshToken(data.refreshToken);
     localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
     setCurrentUser(data.user);
+    ensureMemberForUser(data.user);
     if (data.user.role === 'SUPER_ADMIN') {
       setCurrentView('admin');
     } else {
@@ -494,6 +515,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRefreshToken(data.refreshToken);
     localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
     setCurrentUser(data.user);
+    ensureMemberForUser(data.user);
     if (data.user.role === 'SUPER_ADMIN') {
       setCurrentView('admin');
     } else {
@@ -537,10 +559,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res.ok) {
       throw new Error(data.message || 'Registration failed.');
     }
+    // New accounts receive a session so they land on the member dashboard immediately
+    if (data.accessToken && data.refreshToken && data.user) {
+      setAuthToken(data.accessToken);
+      setRefreshToken(data.refreshToken);
+      localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
+      setCurrentUser(data.user);
+      ensureMemberForUser(data.user);
+      if (data.user.role === 'SUPER_ADMIN') {
+        setCurrentView('admin');
+      } else {
+        setCurrentView('member');
+      }
+    }
     return data;
   };
 
-  const logoutUser = async () => {
+  const logoutUser = async (options?: { redirectToLanding?: boolean; silent?: boolean }) => {
+    const redirectToLanding = options?.redirectToLanding !== false;
     try {
       if (authToken) {
         await fetch('/auth/logout', {
@@ -556,14 +592,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setRefreshToken(null);
     localStorage.removeItem('lumenfield_refresh_token');
     setCurrentUser(null);
-    setCurrentView('landing');
-    showToast('Signed out successfully.', 'info');
+    if (redirectToLanding) {
+      setCurrentView('landing');
+    }
+    if (!options?.silent) {
+      showToast('Signed out successfully.', 'info');
+    }
   };
 
   const [toasts, setToasts] = useState<ToastInfo[]>([]);
 
   const activeMember =
-    members.find((m) => m.id === activeMemberId) || members[0];
+    members.find((m) => m.id === activeMemberId) ||
+    members[0] ||
+    LANDING_TEASER_MEMBER;
 
   const showToast = (message: string, type: 'success' | 'info' | 'warning' = 'success') => {
     const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
@@ -1696,12 +1738,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const resetDemoData = () => {
     setMembers(INITIAL_MEMBERS);
-    setActiveMemberId('LF-000124');
+    setActiveMemberId('');
     setTransactions(INITIAL_TRANSACTIONS);
-    setLoanApplications([INITIAL_LOAN_APPLICATION]);
+    setLoanApplications(INITIAL_LOAN_APPLICATIONS);
     setLedgerPostings(INITIAL_LEDGER_POSTINGS);
     setRecentFunding(INITIAL_RECENT_FUNDING);
     setAuditLog(INITIAL_AUDIT_LOG);
+    if (currentUser) {
+      ensureMemberForUser(currentUser);
+    }
     showToast('Account data has been reset.', 'info');
   };
 

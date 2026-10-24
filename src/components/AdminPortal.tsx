@@ -61,6 +61,7 @@ export const AdminPortal: React.FC = () => {
     openSecurityModal,
     currentUser,
     openAuthModal,
+    logoutUser,
     adminKycQueue,
     fetchAdminKycQueue,
     reviewKycSubmission,
@@ -108,6 +109,21 @@ export const AdminPortal: React.FC = () => {
     }
   }, [adminTab]);
 
+  // Guests landing on /admin: open sign-in immediately
+  useEffect(() => {
+    if (!currentUser) {
+      openAuthModal('login');
+    }
+  }, [currentUser, openAuthModal]);
+
+  const startAdminSignIn = async () => {
+    if (currentUser) {
+      await logoutUser({ redirectToLanding: false, silent: true });
+    }
+    setCurrentView('admin');
+    openAuthModal('login');
+  };
+
   const currentMember =
     members.find((m) => m.id === selectedMemberId) || members[0];
 
@@ -143,43 +159,55 @@ export const AdminPortal: React.FC = () => {
   };
 
   if (currentUser?.role !== 'SUPER_ADMIN') {
+    const isGuest = !currentUser;
     return (
       <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-[#DCE5E3] p-8 text-center space-y-5">
-            <div className="w-16 h-16 bg-[#FDF2F2] border border-[#D9383A]/30 rounded-2xl flex items-center justify-center mx-auto text-[#D9383A]">
-              <Shield className="w-8 h-8" />
+            <div
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto ${
+                isGuest
+                  ? 'bg-[#E3F3F1] border border-[#0F766E]/30 text-[#0A3D3F]'
+                  : 'bg-[#FDF2F2] border border-[#D9383A]/30 text-[#D9383A]'
+              }`}
+            >
+              {isGuest ? <KeyRound className="w-8 h-8" /> : <Shield className="w-8 h-8" />}
             </div>
             <div>
-              <span className="inline-block px-2.5 py-1 bg-[#FDF2F2] text-[#D9383A] text-xs font-bold rounded-lg mb-2">
-                HTTP 403 Forbidden • Server RolesGuard
-              </span>
+              {!isGuest && (
+                <span className="inline-block px-2.5 py-1 bg-[#FDF2F2] text-[#D9383A] text-xs font-bold rounded-lg mb-2">
+                  Access restricted
+                </span>
+              )}
               <h2 className="text-xl font-bold font-display text-[#0E1B1F]">
-                Super Administrator Access Required
+                {isGuest ? 'Administrator sign in' : 'Super Administrator Access Required'}
               </h2>
-              <p className="text-xs text-[#4A5B60] mt-2 leading-relaxed">
-                Administrator access is required for this portal.
-                You are currently signed in as <strong>{currentUser?.fullName || 'Anonymous'}</strong> ({currentUser?.role || 'Guest'}).
+              <p className="text-sm text-[#4A5B60] mt-2 leading-relaxed">
+                {isGuest
+                  ? 'Sign in with your administrator account to open the admin portal.'
+                  : (
+                    <>
+                      This portal is limited to super administrators. You are signed in as{' '}
+                      <strong>{currentUser.fullName}</strong> ({currentUser.role}).
+                    </>
+                  )}
               </p>
             </div>
 
             <div className="space-y-2 pt-2">
               <button
                 type="button"
-                onClick={() => openAuthModal('login')}
-                className="w-full bg-[#0A3D3F] hover:bg-[#072F30] text-white font-bold py-2.5 px-4 rounded-xl shadow-xs transition min-h-[44px] cursor-pointer text-xs"
+                onClick={() => void startAdminSignIn()}
+                className="w-full bg-[#0A3D3F] hover:bg-[#072F30] text-white font-bold py-2.5 px-4 rounded-xl shadow-xs transition min-h-[44px] cursor-pointer text-sm"
               >
-                Sign in with administrator account
+                {isGuest ? 'Sign in' : 'Sign in with administrator account'}
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setCurrentView('member');
-                  setMemberTab('overview');
-                }}
-                className="w-full bg-[#F4F7F6] hover:bg-[#DCE5E3] text-[#0E1B1F] font-bold py-2.5 px-4 rounded-xl transition min-h-[44px] cursor-pointer text-xs"
+                onClick={() => setCurrentView('landing')}
+                className="w-full bg-[#F4F7F6] hover:bg-[#DCE5E3] text-[#0E1B1F] font-bold py-2.5 px-4 rounded-xl transition min-h-[44px] cursor-pointer text-sm"
               >
-                Return to Member Dashboard
+                Back to home
               </button>
             </div>
           </div>
