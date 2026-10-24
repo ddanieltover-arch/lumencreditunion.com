@@ -130,6 +130,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
+    // Mirror server password policy for clearer client-side feedback
+    const passwordIssues: string[] = [];
+    if (password.length < 12) passwordIssues.push('Password must be at least 12 characters.');
+    if (!/[A-Z]/.test(password)) passwordIssues.push('Include at least one uppercase letter.');
+    if (!/[a-z]/.test(password)) passwordIssues.push('Include at least one lowercase letter.');
+    if (!/[0-9]/.test(password)) passwordIssues.push('Include at least one number.');
+    if (!/[^A-Za-z0-9]/.test(password)) {
+      passwordIssues.push('Include at least one special character (e.g. !@#$%).');
+    }
+    if (passwordIssues.length) {
+      setErrorMsg(passwordIssues.join(' '));
+      setLoading(false);
+      return;
+    }
+
     try {
       const res = await registerUser({
         email,

@@ -29,6 +29,7 @@ import {
   notifyKycDecision,
   notifyLoanDecision,
 } from '../utils/pushNotifications';
+import { formatApiError } from '../utils/apiError';
 import {
   INITIAL_MEMBERS,
   INITIAL_TRANSACTIONS,
@@ -571,7 +572,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(data.message || 'Registration failed.');
+      throw new Error(formatApiError(data, 'Registration failed.'));
     }
     // New accounts receive a session so they land on the member dashboard immediately
     if (data.accessToken && data.refreshToken && data.user) {

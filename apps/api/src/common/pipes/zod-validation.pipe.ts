@@ -29,7 +29,9 @@ export function validateZod<T>(schema: ZodSchema<T>, source: 'body' | 'query' | 
           message: i.message,
           code: i.code,
         }));
-        next(new BadRequestException('Validation failed', issues));
+        const summary =
+          issues.map((i) => i.message).filter(Boolean).join(' ') || 'Validation failed';
+        next(new BadRequestException(summary, issues));
       } else {
         next(error);
       }
