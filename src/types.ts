@@ -6,6 +6,7 @@ export type MemberTab =
   | 'overview'
   | 'wallet'
   | 'transfers'
+  | 'funding'
   | 'loans'
   | 'cards'
   | 'documents'
@@ -16,6 +17,7 @@ export type AdminTab =
   | 'members'
   | 'identity_reviews'
   | 'loan_applications'
+  | 'virtual_cards'
   | 'ledger'
   | 'audit_log'
   | 'country_settings';
@@ -87,6 +89,7 @@ export interface LoanApplication {
   id: string;
   memberId: string;
   memberName: string;
+  memberEmail?: string;
   type: 'auto' | 'mortgage';
   title: string;
   requestedAmount: number;
@@ -160,6 +163,42 @@ export interface CountryServiceInfo {
   sanctionReason?: string | null;
 }
 
+export type BankScheme =
+  | 'US_ABA'
+  | 'CA_EFT'
+  | 'GB_SORT'
+  | 'AU_BSB'
+  | 'NZ_ACCOUNT'
+  | 'MX_CLABE'
+  | 'BR_ACCOUNT'
+  | 'IN_IFSC'
+  | 'JP_ZENGIN'
+  | 'IBAN'
+  | 'LUMENFIELD_DOMESTIC';
+
+export interface MemberBankIdentity {
+  scheme: BankScheme;
+  details: {
+    primary: string;
+    routingNumber?: string;
+    accountNumber?: string;
+    accountType?: 'CHECKING' | 'SAVINGS';
+    institutionNumber?: string;
+    transitNumber?: string;
+    sortCode?: string;
+    bsb?: string;
+    bankCode?: string;
+    branchCode?: string;
+    ifsc?: string;
+    bic?: string;
+    clabe?: string;
+    iban?: string;
+    countryCode: string;
+  };
+  accountNumberNormalized: string;
+  accountNumberDisplay: string;
+}
+
 export interface MemberProfile {
   id: string;
   name: string;
@@ -168,8 +207,11 @@ export interface MemberProfile {
   countryCode: string;
   avatarInitials: string;
   identityVerified: boolean;
+  emailVerified?: boolean;
   memberSince: string;
   wallets: Record<Currency, number>;
   virtualCard: VirtualCard;
   documents: KYCDocument[];
+  /** Country-format deposit / lookup identity (sandbox). */
+  bankIdentity?: MemberBankIdentity | null;
 }

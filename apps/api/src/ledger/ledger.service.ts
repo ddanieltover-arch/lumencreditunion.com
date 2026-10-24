@@ -17,6 +17,14 @@ import { AuditService } from '../audit/audit.service';
 import type { KycService } from '../kyc/kyc.service';
 import type { AuthService } from '../auth/auth.service';
 import { EmailService } from '../email/email.service';
+import {
+  loadPersistedLedgerSnapshot,
+  persistLedgerSnapshot,
+} from './ledger-persistence';
+
+type GlobalLedger = typeof globalThis & {
+  __lumenLedgerService?: LedgerService;
+};
 
 export interface AccountRecord {
   id: string;
@@ -74,6 +82,7 @@ export class LedgerService {
   private memberWallets = new Map<string, string>(); // key: `${memberId}:${currency}` -> accountId
   private transactions: LedgerTransactionRecord[] = [];
   private idempotencyStore = new Map<string, LedgerTransactionRecord>();
+  private hydratePromise: Promise<void> | null = null;
 
   constructor(
     private readonly configService: ConfigService = ConfigService.getInstance(),
@@ -83,6 +92,83 @@ export class LedgerService {
     private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
     this.initSystemAccounts();
+  }
+
+  /** Process-wide singleton so funding, balances, and ledger history share one book. */
+  static getInstance(
+    configService?: ConfigService,
+    auditService?: AuditService,
+    kycService?: KycService,
+    authService?: AuthService,
+  ): LedgerService {
+    const g = globalThis as GlobalLedger;
+    if (!g.__lumenLedgerService) {
+      g.__lumenLedgerService = new LedgerService(
+        configService || ConfigService.getInstance(),
+        auditService || new AuditService(),
+        kycService,
+        authService,
+      );
+    }
+    return g.__lumenLedgerService;
+  }
+
+  async ensureReady(): Promise<void> {
+    if (!this.hydratePromise) {
+      this.hydratePromise = this.hydrateFromStore()
+        .then(() => {
+          // Persist live in-memory book if DB was empty (e.g. first deploy after funding)
+          if (this.transactions.length > 0) {
+            this.schedulePersist();
+          }
+        })
+        .catch((err) => {
+          console.error('[Ledger] Hydration failed:', err);
+          this.hydratePromise = null;
+        });
+    }
+    await this.hydratePromise;
+  }
+
+  private async hydrateFromStore(): Promise<void> {
+    const snapshot = await loadPersistedLedgerSnapshot();
+    if (!snapshot?.transactions?.length && !snapshot?.accounts?.length) return;
+
+    // Prefer durable snapshot when present (cold start / new process)
+    if (this.transactions.length === 0) {
+      for (const acc of snapshot.accounts || []) {
+        if (!acc?.id) continue;
+        this.accounts.set(acc.id, acc);
+      }
+      for (const [key, accountId] of snapshot.memberWallets || []) {
+        if (key && accountId) this.memberWallets.set(key, accountId);
+      }
+      if (Array.isArray(snapshot.transactions) && snapshot.transactions.length) {
+        this.transactions = snapshot.transactions.slice();
+        this.idempotencyStore.clear();
+        for (const tx of this.transactions) {
+          if (tx?.idempotencyKey) {
+            this.idempotencyStore.set(tx.idempotencyKey, tx);
+          }
+        }
+      }
+      console.log(
+        `[Ledger] Restored ${this.transactions.length} transaction(s) and ${this.accounts.size} account(s) from database.`,
+      );
+    }
+  }
+
+  private schedulePersist(): void {
+    void this.persistNow();
+  }
+
+  private async persistNow(): Promise<void> {
+    await persistLedgerSnapshot({
+      accounts: Array.from(this.accounts.values()),
+      memberWallets: Array.from(this.memberWallets.entries()),
+      transactions: this.transactions.slice(),
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   /**
@@ -214,9 +300,7 @@ export class LedgerService {
 
     this.accounts.set(accountId, wallet);
     this.memberWallets.set(key, accountId);
-    if (memberId !== accountId) {
-      this.accounts.set(memberId, wallet);
-    }
+    // Do not alias wallet under raw memberId — multi-currency wallets would overwrite each other.
     return wallet;
   }
 
@@ -363,6 +447,8 @@ export class LedgerService {
         }
       }
     }
+
+    this.schedulePersist();
 
     // Record audit log
     await this.auditService.record({

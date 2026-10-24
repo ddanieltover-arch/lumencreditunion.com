@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import { LumenLogo } from './LumenLogo';
-import { Currency, Transaction } from '../types';
+import { Currency, MemberTab, Transaction } from '../types';
+import { resolveHomeCurrency, currencySymbol } from '@lumenfield/shared';
 import {
   LayoutDashboard,
   Wallet,
@@ -12,6 +13,8 @@ import {
   Settings,
   Send,
   Download,
+  CircleDollarSign,
+  ArrowUpFromLine,
   Car,
   Lock,
   Unlock,
@@ -38,13 +41,17 @@ import {
   AlertTriangle,
   ExternalLink,
   LogOut,
+  Menu,
+  type LucideIcon,
 } from 'lucide-react';
 import { VirtualCardsView } from './VirtualCardsView';
 import { PWAInstallButton } from './PWAInstallButton';
+import { BankDepositDetails } from './BankDepositDetails';
 import {
   PanelSwap,
   FadeUp,
   CountUp,
+  AnimatePresence,
   motion,
   MOTION,
   usePrefersReducedMotion,
@@ -57,9 +64,38 @@ import {
   notifyLoanDecision,
 } from '../utils/pushNotifications';
 
+const MEMBER_NAV_ITEMS: Array<{
+  id: MemberTab;
+  label: string;
+  icon: LucideIcon;
+  accent?: string;
+  featured?: boolean;
+}> = [
+  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'wallet', label: 'Wallet', icon: Wallet },
+  {
+    id: 'funding',
+    label: 'Funding',
+    icon: CircleDollarSign,
+    accent: 'text-[#F5B942]',
+    featured: true,
+  },
+  { id: 'transfers', label: 'Transfers', icon: ArrowLeftRight },
+  { id: 'loans', label: 'Loans', icon: Landmark },
+  { id: 'cards', label: 'Cards', icon: CreditCard },
+  { id: 'documents', label: 'Documents', icon: FileCheck },
+  { id: 'settings', label: 'Settings', icon: Settings },
+];
+
+/** Primary mobile bottom-nav destinations (keep to 4 + More). Funding is featured. */
+const MEMBER_BOTTOM_TABS: MemberTab[] = ['overview', 'wallet', 'funding', 'cards'];
+
 export const MemberDashboard: React.FC = () => {
   const prefersReducedMotion = usePrefersReducedMotion();
   const navIndicatorTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: MOTION.duration.base, ease: MOTION.ease.out };
+  const drawerTransition = prefersReducedMotion
     ? { duration: 0 }
     : { duration: MOTION.duration.base, ease: MOTION.ease.out };
   const {
@@ -83,7 +119,154 @@ export const MemberDashboard: React.FC = () => {
     openTermsModal,
     openPrivacyModal,
     submitKycVerification,
+    kycStatus,
+    kycSubmission,
+    fetchKycStatus,
+    fetchMemberWalletActivity,
+    countries,
+    authToken,
   } = useApp();
+
+  const countryMeta = countries.find(
+    (c) => c.code.toUpperCase() === (activeMember?.countryCode || '').toUpperCase(),
+  );
+  const homeCurrency = resolveHomeCurrency(
+    activeMember?.countryCode || currentUser?.countryCode,
+    countryMeta?.currency,
+  ) as Currency;
+  const homeSymbol = currencySymbol(homeCurrency);
+  const otherCurrencies = (['USD', 'CAD', 'GBP', 'EUR'] as Currency[]).filter(
+    (c) => c !== homeCurrency,
+  );
+
+  useEffect(() => {
+    if (currentUser?.role === 'MEMBER' || (currentUser && currentUser.role !== 'SUPER_ADMIN')) {
+      void fetchKycStatus();
+      void fetchMemberWalletActivity();
+    }
+  }, [currentUser?.id, authToken]);
+
+  // Keep transfer/swap defaults aligned with the member's signup-country currency
+  useEffect(() => {
+    if (!activeMember) return;
+    setSendCurrency(homeCurrency);
+    setWithdrawCurrency(homeCurrency);
+    setFundingCurrency(homeCurrency);
+    setSwapFrom(homeCurrency);
+    setSwapTo(otherCurrencies[0] || 'USD');
+  }, [homeCurrency, activeMember?.id]);
+
+  if (!activeMember || !currentUser) {
+    return null;
+  }
+
+  const readJsonSafe = async (res: Response): Promise<any> => {
+    const text = await res.text();
+    if (!text) {
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}). Please try again.`);
+      }
+      return {};
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(
+        res.ok
+          ? 'Unexpected server response. Please refresh and try again.'
+          : `Request failed (${res.status}). Please try again.`,
+      );
+    }
+  };
+
+  const refreshFundingRequests = async () => {
+    if (!authToken) return;
+    try {
+      const res = await fetch('/wallet/funding-requests', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const data = await readJsonSafe(res);
+      if (!res.ok) return;
+      setFundingRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch {
+      /* ignore list refresh errors */
+    }
+  };
+
+  useEffect(() => {
+    if (memberTab === 'funding') {
+      void refreshFundingRequests();
+    }
+  }, [memberTab, authToken]);
+
+  const handleSubmitFundingRequest = async () => {
+    if (!activeMember.identityVerified && kycStatus !== 'APPROVED') {
+      setMemberTab('documents');
+      showToast('Complete identity verification before requesting funding.', 'info');
+      return;
+    }
+    const amt = parseFloat(fundingAmount);
+    if (isNaN(amt) || amt <= 0) {
+      showToast('Enter a valid funding amount.', 'warning');
+      return;
+    }
+    if (fundingReason.trim().length < 5) {
+      showToast('Please describe why you need funding (at least 5 characters).', 'warning');
+      return;
+    }
+    if (!authToken) {
+      showToast('Sign in again to submit a funding request.', 'warning');
+      return;
+    }
+    try {
+      setFundingSubmitting(true);
+      const res = await fetch('/wallet/funding-requests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({
+          amount: fundingAmount.trim(),
+          currency: fundingCurrency,
+          reason: fundingReason.trim(),
+          sourceHint: fundingSourceHint,
+        }),
+      });
+      const data = await readJsonSafe(res);
+      if (!res.ok) {
+        throw new Error(data.message || 'Could not submit funding request.');
+      }
+      setFundingAmount('');
+      setFundingReason('');
+      showToast(
+        `Funding request for ${data.amountFormatted || `${fundingCurrency} ${fundingAmount}`} submitted. An administrator will review it.`,
+        'success',
+      );
+      await refreshFundingRequests();
+    } catch (err: any) {
+      showToast(err.message || 'Funding request failed.', 'warning');
+    } finally {
+      setFundingSubmitting(false);
+    }
+  };
+
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileNavOpen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [mobileNavOpen]);
 
   // Wallet activity filtering & pagination
   const [walletTxPage, setWalletTxPage] = useState<number>(1);
@@ -95,6 +278,10 @@ export const MemberDashboard: React.FC = () => {
 
   // Modal states
   const [showSendModal, setShowSendModal] = useState<boolean>(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState<boolean>(false);
+  const [withdrawAmount, setWithdrawAmount] = useState<string>('');
+  const [withdrawCurrency, setWithdrawCurrency] = useState<Currency>('USD');
+  const [withdrawDestination, setWithdrawDestination] = useState<string>('ACH · Routing 021000021 · ••9401');
   const [showLoanModal, setShowLoanModal] = useState<boolean>(false);
   const [showDocUploadModal, setShowDocUploadModal] = useState<boolean>(false);
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
@@ -118,6 +305,26 @@ export const MemberDashboard: React.FC = () => {
   const [swapTo, setSwapTo] = useState<Currency>('CAD');
   const [swapAmount, setSwapAmount] = useState<string>('500');
 
+  // Funding request form
+  const [fundingAmount, setFundingAmount] = useState<string>('');
+  const [fundingCurrency, setFundingCurrency] = useState<Currency>('USD');
+  const [fundingReason, setFundingReason] = useState<string>('');
+  const [fundingSourceHint, setFundingSourceHint] = useState<
+    'BANK_TRANSFER' | 'WIRE' | 'CARD' | 'OTHER'
+  >('BANK_TRANSFER');
+  const [fundingSubmitting, setFundingSubmitting] = useState(false);
+  const [fundingRequests, setFundingRequests] = useState<
+    Array<{
+      id: string;
+      amountFormatted: string;
+      currency: string;
+      reason: string;
+      status: string;
+      createdAt: string;
+      reviewerNote?: string | null;
+    }>
+  >([]);
+
   // Loan Application Form State
   const [loanType, setLoanType] = useState<'auto' | 'mortgage'>('auto');
   const [loanAmount, setLoanAmount] = useState<number>(18000);
@@ -129,8 +336,11 @@ export const MemberDashboard: React.FC = () => {
   // KYC Upload form state
   const [kycType, setKycType] = useState<'passport' | 'id_card' | 'residence_permit' | 'drivers_license'>('passport');
   const [kycDocName, setKycDocName] = useState<string>('US Passport (Verified Scan)');
-  const [kycFile, setKycFile] = useState<File | null>(null);
+  const [kycFrontFile, setKycFrontFile] = useState<File | null>(null);
+  const [kycBackFile, setKycBackFile] = useState<File | null>(null);
   const [isSubmittingKyc, setIsSubmittingKyc] = useState(false);
+  const kycNeedsBothSides =
+    kycType === 'drivers_license' || kycType === 'id_card' || kycType === 'residence_permit';
 
   // External bank / rails form
   const [bankRail, setBankRail] = useState<'ACH' | 'SEPA' | 'FASTER' | 'USDC'>('ACH');
@@ -228,6 +438,29 @@ export const MemberDashboard: React.FC = () => {
     }
   };
 
+  const handleWithdraw = () => {
+    const amt = parseFloat(withdrawAmount);
+    if (isNaN(amt) || amt <= 0) {
+      showToast('Enter a valid withdrawal amount.', 'warning');
+      return;
+    }
+    if (!withdrawDestination.trim()) {
+      showToast('Choose or enter a withdrawal destination.', 'warning');
+      return;
+    }
+    const res = sendTransfer({
+      recipient: `Withdraw → ${withdrawDestination.trim()}`,
+      amount: amt,
+      currency: withdrawCurrency,
+    });
+    if (res.success) {
+      setShowWithdrawModal(false);
+      setWithdrawAmount('');
+    } else {
+      showToast(res.message, 'warning');
+    }
+  };
+
   const handleSwap = () => {
     const amt = parseFloat(swapAmount);
     if (isNaN(amt) || amt <= 0) {
@@ -256,9 +489,34 @@ export const MemberDashboard: React.FC = () => {
     setShowLoanModal(false);
   };
 
+  const readFileAsDataUrl = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Could not read the selected file.'));
+      reader.readAsDataURL(file);
+    });
+
+  const resolveKycMime = (file: File) =>
+    file.type === 'image/jpeg' ||
+    file.type === 'image/png' ||
+    file.type === 'image/webp' ||
+    file.type === 'application/pdf'
+      ? file.type
+      : null;
+
   const handleUploadKYC = async () => {
-    if (!kycFile) {
-      showToast('Select a document file to upload.', 'warning');
+    if (!kycFrontFile) {
+      showToast(
+        kycNeedsBothSides
+          ? 'Upload the front of your document.'
+          : 'Select a document file to upload.',
+        'warning',
+      );
+      return;
+    }
+    if (kycNeedsBothSides && !kycBackFile) {
+      showToast('Upload the back of your document.', 'warning');
       return;
     }
     if (!kycDocName.trim()) {
@@ -273,49 +531,61 @@ export const MemberDashboard: React.FC = () => {
       drivers_license: 'DRIVERS_LICENSE',
     } as const;
 
-    const mime =
-      kycFile.type === 'image/jpeg' ||
-      kycFile.type === 'image/png' ||
-      kycFile.type === 'image/webp' ||
-      kycFile.type === 'application/pdf'
-        ? kycFile.type
-        : null;
-    if (!mime) {
+    const frontMime = resolveKycMime(kycFrontFile);
+    if (!frontMime) {
       showToast('Upload a JPG, PNG, WebP, or PDF file.', 'warning');
+      return;
+    }
+    const backMime = kycBackFile ? resolveKycMime(kycBackFile) : null;
+    if (kycBackFile && !backMime) {
+      showToast('Back side must be JPG, PNG, WebP, or PDF.', 'warning');
       return;
     }
 
     try {
       setIsSubmittingKyc(true);
-      const fileBase64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(new Error('Could not read the selected file.'));
-        reader.readAsDataURL(kycFile);
-      });
+      const frontBase64 = await readFileAsDataUrl(kycFrontFile);
+      const documents: Array<{
+        fileName: string;
+        mimeType: 'image/jpeg' | 'image/png' | 'image/webp' | 'application/pdf';
+        fileBase64: string;
+        side: 'FRONT' | 'BACK';
+      }> = [
+        {
+          fileName: kycFrontFile.name || `${kycDocName.replace(/\s+/g, '_')}_front.pdf`,
+          mimeType: frontMime,
+          fileBase64: frontBase64,
+          side: 'FRONT',
+        },
+      ];
+
+      if (kycBackFile && backMime) {
+        const backBase64 = await readFileAsDataUrl(kycBackFile);
+        documents.push({
+          fileName: kycBackFile.name || `${kycDocName.replace(/\s+/g, '_')}_back.pdf`,
+          mimeType: backMime,
+          fileBase64: backBase64,
+          side: 'BACK',
+        });
+      }
 
       await submitKycVerification({
         countryCode: (activeMember.countryCode || 'US').slice(0, 2).toUpperCase(),
         documentType: typeMap[kycType],
-        documents: [
-          {
-            fileName: kycFile.name || `${kycDocName.replace(/\s+/g, '_')}.pdf`,
-            mimeType: mime,
-            fileBase64,
-            side: 'FRONT',
-          },
-        ],
+        documents,
       });
 
       setShowDocUploadModal(false);
-      setKycFile(null);
+      setKycFrontFile(null);
+      setKycBackFile(null);
       showToast('Identity document submitted for admin review.', 'success');
     } catch (err: any) {
       // Fall back to local queue if API is unavailable so the UI still responds
-      const fileName = kycFile.name || `${kycType}_${activeMember.id.toLowerCase()}.pdf`;
+      const fileName = kycFrontFile.name || `${kycType}_${activeMember.id.toLowerCase()}.pdf`;
       uploadKYC(kycType, kycDocName.trim(), fileName);
       setShowDocUploadModal(false);
-      setKycFile(null);
+      setKycFrontFile(null);
+      setKycBackFile(null);
       if (err?.message) {
         showToast(`${err.message} Saved locally for review.`, 'warning');
       }
@@ -353,13 +623,162 @@ export const MemberDashboard: React.FC = () => {
     loanApplications[0] ||
     null;
 
+  const activeNavLabel =
+    MEMBER_NAV_ITEMS.find((item) => item.id === memberTab)?.label || 'Overview';
+  const memberBottomItems = MEMBER_NAV_ITEMS.filter((item) =>
+    MEMBER_BOTTOM_TABS.includes(item.id),
+  );
+  const memberMoreActive = !MEMBER_BOTTOM_TABS.includes(memberTab);
+
+  const selectMemberTab = (tab: MemberTab) => {
+    setMemberTab(tab);
+    setMobileNavOpen(false);
+  };
+
+  const renderMemberNavButtons = (layoutId: string) =>
+    MEMBER_NAV_ITEMS.map((item) => {
+      const Icon = item.icon;
+      const isActive = memberTab === item.id;
+      const isFeatured = Boolean(item.featured);
+      return (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => selectMemberTab(item.id)}
+          className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
+            isActive
+              ? isFeatured
+                ? 'text-[#0A3D3F] font-bold'
+                : 'text-white font-semibold'
+              : isFeatured
+                ? 'text-[#F5B942] font-semibold hover:bg-[#F5B942]/15'
+                : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
+          }`}
+        >
+          {isActive && (
+            <motion.span
+              layoutId={layoutId}
+              className={`absolute inset-0 rounded-[10px] ${
+                isFeatured ? 'bg-[#F5B942]' : 'bg-[#0F5557]'
+              }`}
+              transition={navIndicatorTransition}
+            />
+          )}
+          {!isActive && isFeatured && (
+            <span className="absolute inset-0 rounded-[10px] border border-[#F5B942]/45 bg-[#F5B942]/10" />
+          )}
+          <Icon
+            className={`relative z-10 w-4 h-4 shrink-0 ${
+              isActive && isFeatured ? 'text-[#0A3D3F]' : item.accent || ''
+            }`}
+          />
+          <span className="relative z-10">{item.label}</span>
+          {isFeatured && !isActive && (
+            <span className="relative z-10 ml-auto text-[9px] font-bold uppercase tracking-wider text-[#F5B942]/90">
+              New
+            </span>
+          )}
+        </button>
+      );
+    });
+
+  const memberProfileCard = (
+    <div className="p-3.5 rounded-xl bg-[#0F5557] text-[13px] leading-snug text-[#C9DEDC] flex flex-col gap-1.5 border border-[#2D7A77]/50">
+      <div className="flex items-center justify-between text-xs">
+        <span>Signed in as</span>
+        <span className="font-mono text-[10px] bg-[#0A3D3F] px-1.5 py-0.5 rounded text-[#F5B942] max-w-[140px] truncate" title={activeMember.bankIdentity?.accountNumberDisplay || activeMember.id}>
+          {activeMember.bankIdentity?.accountNumberDisplay || activeMember.id.slice(0, 8)}
+        </span>
+      </div>
+      <div className="font-semibold text-white text-sm">
+        {currentUser?.fullName || activeMember.name}
+      </div>
+      <div className="text-[11px] text-[#8FA5A3] truncate">
+        {currentUser?.email || activeMember.email}
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
+      {/* ── MOBILE TOP BAR ── */}
+      <header className="md:hidden sticky top-0 z-40 bg-[#0A3D3F] text-white border-b border-[#072F30]">
+        <div className="flex items-center gap-2.5 px-4 min-h-[52px]">
+          <LumenLogo size={26} textColor="#FFFFFF" />
+          <div className="min-w-0">
+            <div className="text-[10px] font-mono font-bold tracking-[0.12em] text-[#8FA5A3] uppercase leading-none">
+              Member
+            </div>
+            <div className="text-sm font-semibold truncate leading-tight mt-0.5">
+              {activeNavLabel}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── MOBILE DRAWER ── */}
+      <AnimatePresence>
+        {mobileNavOpen && (
+          <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Member menu">
+            <motion.button
+              type="button"
+              aria-label="Close menu"
+              className="absolute inset-0 bg-[#0E1B1F]/55 backdrop-blur-[2px] cursor-pointer"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={drawerTransition}
+              onClick={() => setMobileNavOpen(false)}
+            />
+            <motion.aside
+              className="absolute inset-y-0 left-0 w-[min(100%,300px)] bg-[#0A3D3F] text-white shadow-2xl flex flex-col border-r border-[#072F30]"
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={drawerTransition}
+            >
+              <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+                <LumenLogo size={28} textColor="#FFFFFF" />
+                <button
+                  type="button"
+                  onClick={() => setMobileNavOpen(false)}
+                  aria-label="Close member menu"
+                  className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <nav
+                aria-label="Member navigation"
+                className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-1.5 text-[15px] font-medium"
+              >
+                {renderMemberNavButtons('member-nav-active-mobile')}
+              </nav>
+
+              <div className="px-3 pb-5 pt-2 border-t border-white/10 flex flex-col gap-3">
+                {memberProfileCard}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileNavOpen(false);
+                    void logoutUser();
+                  }}
+                  className="w-full flex items-center gap-2.5 text-xs font-semibold text-[#C9DEDC] hover:text-white hover:bg-[#0F5557]/60 p-2.5 rounded-xl border border-white/10 transition cursor-pointer min-h-[44px]"
+                >
+                  <LogOut className="w-4 h-4 shrink-0" />
+                  <span>Sign out</span>
+                </button>
+              </div>
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
+
       <div className="flex-1 flex flex-col md:flex-row min-w-0">
-        {/* ── SIDEBAR NAVIGATION (FROM DESIGN) ── */}
-        <aside className="w-full md:w-[260px] shrink-0 bg-[#0A3D3F] text-white p-7 md:py-7 md:px-5 flex flex-col justify-between gap-7 border-r border-[#072F30]">
+        {/* ── DESKTOP SIDEBAR ── */}
+        <aside className="hidden md:flex w-[260px] shrink-0 bg-[#0A3D3F] text-white p-7 md:py-7 md:px-5 flex-col justify-between gap-7 border-r border-[#072F30]">
           <div className="flex flex-col gap-7">
-            {/* Logo */}
             <a
               href="#"
               onClick={(e) => {
@@ -371,167 +790,13 @@ export const MemberDashboard: React.FC = () => {
               <LumenLogo size={30} textColor="#FFFFFF" />
             </a>
 
-            {/* Member Nav Links */}
             <nav aria-label="Member navigation" className="flex flex-col gap-1.5 text-[15px] font-medium">
-              <button
-                type="button"
-                onClick={() => setMemberTab('overview')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'overview'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'overview' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <LayoutDashboard className="relative z-10 w-4 h-4 shrink-0 text-[#F5B942]" />
-                <span className="relative z-10">Overview</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMemberTab('wallet')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'wallet'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'wallet' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Wallet className="relative z-10 w-4 h-4 shrink-0" />
-                <span className="relative z-10">Wallet</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMemberTab('transfers')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'transfers'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'transfers' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <ArrowLeftRight className="relative z-10 w-4 h-4 shrink-0" />
-                <span className="relative z-10">Transfers</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMemberTab('loans')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'loans'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'loans' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Landmark className="relative z-10 w-4 h-4 shrink-0" />
-                <span className="relative z-10">Loans</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMemberTab('cards')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'cards'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'cards' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <CreditCard className="relative z-10 w-4 h-4 shrink-0" />
-                <span className="relative z-10">Cards</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMemberTab('documents')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'documents'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'documents' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <FileCheck className="relative z-10 w-4 h-4 shrink-0" />
-                <span className="relative z-10">Documents</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setMemberTab('settings')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  memberTab === 'settings'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
-                }`}
-              >
-                {memberTab === 'settings' && (
-                  <motion.span
-                    layoutId="member-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Settings className="relative z-10 w-4 h-4 shrink-0" />
-                <span className="relative z-10">Settings</span>
-              </button>
+              {renderMemberNavButtons('member-nav-active')}
             </nav>
           </div>
 
-          {/* Member Profile Bottom Box */}
           <div className="flex flex-col gap-3">
-            <div className="p-3.5 rounded-xl bg-[#0F5557] text-[13px] leading-snug text-[#C9DEDC] flex flex-col gap-1.5 border border-[#2D7A77]/50">
-              <div className="flex items-center justify-between text-xs">
-                <span>Signed in as</span>
-                <span className="font-mono text-[10px] bg-[#0A3D3F] px-1.5 py-0.5 rounded text-[#F5B942]">
-                  {activeMember.id.slice(0, 8)}
-                </span>
-              </div>
-              <div className="font-semibold text-white text-sm">
-                {currentUser?.fullName || activeMember.name}
-              </div>
-              <div className="text-[11px] text-[#8FA5A3] truncate">
-                {currentUser?.email || activeMember.email}
-              </div>
-            </div>
-
+            {memberProfileCard}
             <button
               type="button"
               onClick={() => void logoutUser()}
@@ -544,7 +809,7 @@ export const MemberDashboard: React.FC = () => {
         </aside>
 
         {/* ── MAIN CONTENT WORKSPACE ── */}
-        <main className="flex-1 min-w-0 p-6 sm:p-8 flex flex-col gap-7 max-w-[1280px]">
+        <main className="flex-1 min-w-0 p-5 sm:p-8 pb-24 md:pb-8 flex flex-col gap-7 max-w-[1280px]">
           {/* Header Bar */}
           <PanelSwap panelKey={`hdr-${memberTab}`} className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-col gap-1">
@@ -552,6 +817,7 @@ export const MemberDashboard: React.FC = () => {
                 {memberTab === 'overview' && `Good morning, ${activeMember.name}`}
                 {memberTab === 'wallet' && 'Multi-Currency Wallet'}
                 {memberTab === 'transfers' && 'Move & Transfer Money'}
+                {memberTab === 'funding' && 'Request Funding'}
                 {memberTab === 'loans' && 'Loans & Financing'}
                 {memberTab === 'cards' && 'Virtual Cards'}
                 {memberTab === 'documents' && 'Identity & Verification Documents'}
@@ -561,6 +827,7 @@ export const MemberDashboard: React.FC = () => {
                 {memberTab === 'overview' && 'Here is where your wallet stands today.'}
                 {memberTab === 'wallet' && 'Manage your fiat balances and exchange between currencies.'}
                 {memberTab === 'transfers' && 'Send instant P2P payments, initiate bank withdrawals, or view transfer rails.'}
+                {memberTab === 'funding' && 'Ask Lumenfield to credit your wallet after a verified deposit or sandbox test credit.'}
                 {memberTab === 'loans' && 'Auto and mortgage loans with fixed terms and transparent payment schedules.'}
                 {memberTab === 'cards' && 'Virtual debit cards with instant freeze protection and custom limits.'}
                 {memberTab === 'documents' && 'Secure repository for government-issued ID review.'}
@@ -570,11 +837,24 @@ export const MemberDashboard: React.FC = () => {
 
             {/* Identity Status Pill (From Design) */}
             <div className="flex items-center gap-2">
-              {activeMember.identityVerified ? (
+              {activeMember.identityVerified || kycStatus === 'APPROVED' ? (
                 <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#E3F3F1] text-[#0A4F4A] text-xs font-semibold border border-[#B8D4D2]">
                   <CheckCircle2 className="w-3.5 h-3.5 text-[#0F766E]" />
                   <span>Identity verified</span>
                 </div>
+              ) : kycStatus === 'PENDING' || kycStatus === 'NEEDS_MORE_INFO' ? (
+                <button
+                  type="button"
+                  onClick={() => setMemberTab('documents')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FFF1CC] text-[#5A4100] text-xs font-semibold border border-[#F0D58A] hover:bg-[#FFE9A8] transition cursor-pointer"
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>
+                    {kycStatus === 'NEEDS_MORE_INFO'
+                      ? 'More info required — view documents'
+                      : 'Verification under review'}
+                  </span>
+                </button>
               ) : (
                 <button
                   type="button"
@@ -602,12 +882,12 @@ export const MemberDashboard: React.FC = () => {
                     <div className="flex items-center justify-between text-xs font-semibold text-[#D6E8E6] tracking-wide">
                       <span>Total balance</span>
                       <span className="px-2.5 py-0.5 rounded-md bg-[#0F5557] text-[#F5D78E] text-[11px] font-mono">
-                        USD wallet
+                        {homeCurrency} wallet
                       </span>
                     </div>
                     <CountUp
-                      value={activeMember.wallets.USD}
-                      prefix="$"
+                      value={activeMember.wallets[homeCurrency] || 0}
+                      prefix={homeSymbol}
                       delay={0.08}
                       duration={0.85}
                       className="font-display font-bold text-4xl sm:text-5xl text-white tracking-tight tabular-nums"
@@ -627,7 +907,27 @@ export const MemberDashboard: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        if (!activeMember.identityVerified) {
+                        if (!activeMember.identityVerified && kycStatus !== 'APPROVED') {
+                          setMemberTab('documents');
+                          showToast(
+                            'Complete identity verification before withdrawing funds.',
+                            'info',
+                          );
+                          return;
+                        }
+                        setWithdrawAmount('');
+                        setWithdrawCurrency(homeCurrency);
+                        setShowWithdrawModal(true);
+                      }}
+                      className="inline-flex items-center justify-center min-h-[44px] px-4 rounded-xl border border-[#5E9A97] text-white hover:bg-white/10 font-semibold text-sm transition-all cursor-pointer"
+                    >
+                      <ArrowUpFromLine className="w-3.5 h-3.5 mr-1.5" />
+                      Withdraw
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!activeMember.identityVerified && kycStatus !== 'APPROVED') {
                           setMemberTab('documents');
                           showToast(
                             'Complete identity verification first. An administrator can then credit your wallet.',
@@ -635,11 +935,7 @@ export const MemberDashboard: React.FC = () => {
                           );
                           return;
                         }
-                        setMemberTab('transfers');
-                        showToast(
-                          'Wallet funding is posted by an administrator after a verified deposit. Use Transfers for member-to-member moves.',
-                          'info',
-                        );
+                        setMemberTab('funding');
                       }}
                       className="inline-flex items-center justify-center min-h-[44px] px-4 rounded-xl border border-[#5E9A97] text-white hover:bg-white/10 font-semibold text-sm transition-all cursor-pointer"
                     >
@@ -658,26 +954,17 @@ export const MemberDashboard: React.FC = () => {
 
                   {/* Other Currency Wallets Strip */}
                   <div className="grid grid-cols-3 gap-4 pt-4 border-t border-[#2D7A77]/50 text-sm">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-xs text-[#B8D4D2] font-semibold">CAD</span>
-                      <span className="font-bold text-base sm:text-lg text-white font-mono">
-                        C${activeMember.wallets.CAD.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-xs text-[#B8D4D2] font-semibold">GBP</span>
-                      <span className="font-bold text-base sm:text-lg text-white font-mono">
-                        £{activeMember.wallets.GBP.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-xs text-[#B8D4D2] font-semibold">EUR</span>
-                      <span className="font-bold text-base sm:text-lg text-white font-mono">
-                        €{activeMember.wallets.EUR.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
+                    {otherCurrencies.map((curr) => (
+                      <div key={curr} className="flex flex-col gap-0.5">
+                        <span className="text-xs text-[#B8D4D2] font-semibold">{curr}</span>
+                        <span className="font-bold text-base sm:text-lg text-white font-mono">
+                          {currencySymbol(curr)}
+                          {(activeMember.wallets[curr] || 0).toLocaleString('en-US', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
@@ -757,55 +1044,68 @@ export const MemberDashboard: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredTransactions.map((tx, txIndex) => {
-                          const isCredit = tx.amount > 0;
-                          const rowDelay =
-                            Math.min(txIndex, MOTION.maxStaggerChildren - 1) * MOTION.stagger.tight;
-                          return (
-                            <motion.tr
-                              key={tx.id}
-                              onClick={() => setSelectedTx(tx)}
-                              className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/80 transition-colors cursor-pointer group"
-                              initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{
-                                duration: MOTION.duration.fast,
-                                delay: prefersReducedMotion ? 0 : rowDelay,
-                                ease: MOTION.ease.out,
-                              }}
+                        {filteredTransactions.length === 0 ? (
+                          <tr>
+                            <td
+                              colSpan={4}
+                              className="py-10 px-2 text-center text-sm text-[#4A5B60]"
                             >
-                              <td className="py-3.5 px-2 font-medium text-[#0E1B1F]">
-                                <div className="flex items-center gap-2">
-                                  <span>{tx.description}</span>
-                                </div>
-                              </td>
-                              <td className="py-3.5 px-2 text-[#4A5B60] text-xs font-mono">
-                                {tx.date}
-                              </td>
-                              <td className="py-3.5 px-2">
-                                <span
-                                  className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                                    tx.status === 'Completed'
-                                      ? 'bg-[#E3F3F1] text-[#0A4F4A]'
-                                      : 'bg-[#FFF1CC] text-[#5A4100]'
+                              No recent activity yet. Credits and transfers will appear here once
+                              posted to your wallet.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredTransactions.map((tx, txIndex) => {
+                            const isCredit = tx.amount > 0;
+                            const rowDelay =
+                              Math.min(txIndex, MOTION.maxStaggerChildren - 1) *
+                              MOTION.stagger.tight;
+                            return (
+                              <motion.tr
+                                key={tx.id}
+                                onClick={() => setSelectedTx(tx)}
+                                className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/80 transition-colors cursor-pointer group"
+                                initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{
+                                  duration: MOTION.duration.fast,
+                                  delay: prefersReducedMotion ? 0 : rowDelay,
+                                  ease: MOTION.ease.out,
+                                }}
+                              >
+                                <td className="py-3.5 px-2 font-medium text-[#0E1B1F]">
+                                  <div className="flex items-center gap-2">
+                                    <span>{tx.description}</span>
+                                  </div>
+                                </td>
+                                <td className="py-3.5 px-2 text-[#4A5B60] text-xs font-mono">
+                                  {tx.date}
+                                </td>
+                                <td className="py-3.5 px-2">
+                                  <span
+                                    className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                      tx.status === 'Completed'
+                                        ? 'bg-[#E3F3F1] text-[#0A4F4A]'
+                                        : 'bg-[#FFF1CC] text-[#5A4100]'
+                                    }`}
+                                  >
+                                    {tx.status}
+                                  </span>
+                                </td>
+                                <td
+                                  className={`py-3.5 px-2 text-right font-semibold font-mono ${
+                                    isCredit ? 'text-[#0A5C47]' : 'text-[#0E1B1F]'
                                   }`}
                                 >
-                                  {tx.status}
-                                </span>
-                              </td>
-                              <td
-                                className={`py-3.5 px-2 text-right font-semibold font-mono ${
-                                  isCredit ? 'text-[#0A5C47]' : 'text-[#0E1B1F]'
-                                }`}
-                              >
-                                {isCredit ? '+' : ''}$
-                                {Math.abs(tx.amount).toLocaleString('en-US', {
-                                  minimumFractionDigits: 2,
-                                })}
-                              </td>
-                            </motion.tr>
-                          );
-                        })}
+                                  {isCredit ? '+' : ''}$
+                                  {Math.abs(tx.amount).toLocaleString('en-US', {
+                                    minimumFractionDigits: 2,
+                                  })}
+                                </td>
+                              </motion.tr>
+                            );
+                          })
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -868,7 +1168,7 @@ export const MemberDashboard: React.FC = () => {
                         type="text"
                         value={quickTo}
                         onChange={(e) => setQuickTo(e.target.value)}
-                        placeholder="Name or Lumenfield ID"
+                        placeholder="Name, email, or account number"
                         className="min-h-[46px] border border-[#BCCAC8] rounded-xl px-3.5 text-sm text-[#0E1B1F] bg-white focus:outline-none focus:border-[#0A3D3F]"
                       />
                     </div>
@@ -906,6 +1206,11 @@ export const MemberDashboard: React.FC = () => {
              ══════════════════════════════════════════════════════ */}
           {memberTab === 'wallet' && (
             <div className="flex flex-col gap-6">
+              <BankDepositDetails
+                identity={activeMember.bankIdentity}
+                memberName={activeMember.name}
+              />
+
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {(['USD', 'CAD', 'GBP', 'EUR'] as Currency[]).map((curr) => {
                   const bal = activeMember.wallets[curr] || 0;
@@ -1288,7 +1593,7 @@ export const MemberDashboard: React.FC = () => {
                       type="text"
                       value={sendRecipient}
                       onChange={(e) => setSendRecipient(e.target.value)}
-                      placeholder="e.g. Amara O. or LF-000089"
+                      placeholder="e.g. name, email, or account number"
                       className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm"
                     />
                   </div>
@@ -1403,6 +1708,170 @@ export const MemberDashboard: React.FC = () => {
                 <div className="p-4 bg-[#FFF1CC] rounded-xl border border-[#F0D58A] text-xs text-[#5A4100] leading-relaxed">
                   Debits your wallet balance and records the outbound rail transfer in activity history.
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════
+              TAB: FUNDING REQUESTS
+             ══════════════════════════════════════════════════════ */}
+          {memberTab === 'funding' && (
+            <div className="flex flex-col gap-6">
+              <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-5">
+                <div>
+                  <h3 className="font-display font-bold text-xl text-[#0E1B1F]">
+                    Request wallet funding
+                  </h3>
+                  <p className="text-sm text-[#4A5B60] mt-1">
+                    Submit a request for Lumenfield to credit your wallet. An administrator reviews
+                    and posts the credit after verifying your deposit (or sandbox test credit).
+                  </p>
+                </div>
+
+                {(!activeMember.identityVerified && kycStatus !== 'APPROVED') && (
+                  <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-[#FFF1CC] border border-[#F0D58A] text-[#5A4100] text-xs leading-relaxed">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                    <div>
+                      Identity verification is required before funding requests are accepted.{' '}
+                      <button
+                        type="button"
+                        onClick={() => setMemberTab('documents')}
+                        className="font-semibold underline cursor-pointer"
+                      >
+                        Upload documents →
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="sm:col-span-2 flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#4A5B60]">Amount</label>
+                    <input
+                      type="number"
+                      value={fundingAmount}
+                      onChange={(e) => setFundingAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="min-h-[48px] p-3 border border-[#BCCAC8] rounded-xl text-sm font-mono"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-xs font-semibold text-[#4A5B60]">Currency</label>
+                    <select
+                      value={fundingCurrency}
+                      onChange={(e) => setFundingCurrency(e.target.value as Currency)}
+                      className="min-h-[48px] p-3 border border-[#BCCAC8] rounded-xl text-sm bg-white font-semibold"
+                    >
+                      <option value="USD">USD</option>
+                      <option value="CAD">CAD</option>
+                      <option value="GBP">GBP</option>
+                      <option value="EUR">EUR</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#4A5B60]">Funding source</label>
+                  <select
+                    value={fundingSourceHint}
+                    onChange={(e) =>
+                      setFundingSourceHint(
+                        e.target.value as 'BANK_TRANSFER' | 'WIRE' | 'CARD' | 'OTHER',
+                      )
+                    }
+                    className="min-h-[48px] p-3 border border-[#BCCAC8] rounded-xl text-sm bg-white"
+                  >
+                    <option value="BANK_TRANSFER">Bank transfer / ACH / SEPA</option>
+                    <option value="WIRE">Wire transfer</option>
+                    <option value="CARD">Card deposit</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-[#4A5B60]">
+                    Reason / deposit reference notes
+                  </label>
+                  <textarea
+                    value={fundingReason}
+                    onChange={(e) => setFundingReason(e.target.value)}
+                    rows={3}
+                    placeholder="e.g. Incoming wire from Chase · Ref WIRE-48219 · Personal savings transfer"
+                    className="p-3 border border-[#BCCAC8] rounded-xl text-sm resize-y min-h-[96px]"
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  disabled={fundingSubmitting}
+                  onClick={() => void handleSubmitFundingRequest()}
+                  className="self-start min-h-[48px] px-6 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-sm disabled:opacity-60 cursor-pointer inline-flex items-center gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  {fundingSubmitting ? 'Submitting…' : 'Submit funding request'}
+                </button>
+              </div>
+
+              <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-display font-bold text-xl text-[#0E1B1F]">Your requests</h3>
+                  <button
+                    type="button"
+                    onClick={() => void refreshFundingRequests()}
+                    className="text-xs font-semibold text-[#0A3D3F] hover:underline cursor-pointer"
+                  >
+                    Refresh
+                  </button>
+                </div>
+                {fundingRequests.length === 0 ? (
+                  <p className="text-sm text-[#4A5B60]">No funding requests yet.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[520px] text-sm border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs font-semibold text-[#4A5B60] border-b border-[#DCE5E3]">
+                          <th className="py-2 pr-3">Date</th>
+                          <th className="py-2 pr-3">Amount</th>
+                          <th className="py-2 pr-3">Status</th>
+                          <th className="py-2">Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fundingRequests.map((r) => (
+                          <tr key={r.id} className="border-b border-[#EDF2F1]">
+                            <td className="py-3 pr-3 text-xs text-[#4A5B60] whitespace-nowrap">
+                              {new Date(r.createdAt).toLocaleString()}
+                            </td>
+                            <td className="py-3 pr-3 font-mono font-semibold">
+                              {r.amountFormatted}
+                            </td>
+                            <td className="py-3 pr-3">
+                              <span
+                                className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                                  r.status === 'APPROVED'
+                                    ? 'bg-[#E3F3F1] text-[#0A4F4A]'
+                                    : r.status === 'REJECTED'
+                                      ? 'bg-red-50 text-red-700'
+                                      : 'bg-[#FFF1CC] text-[#5A4100]'
+                                }`}
+                              >
+                                {r.status}
+                              </span>
+                            </td>
+                            <td className="py-3 text-[#4A5B60]">
+                              <div>{r.reason}</div>
+                              {r.reviewerNote && (
+                                <div className="text-[11px] mt-0.5 text-[#8FA5A3]">
+                                  Admin: {r.reviewerNote}
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1554,26 +2023,39 @@ export const MemberDashboard: React.FC = () => {
              ══════════════════════════════════════════════════════ */}
           {memberTab === 'documents' && (
             <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <h3 className="font-display font-bold text-xl text-[#0E1B1F]">
                     Identity Documents (KYC)
                   </h3>
                   <p className="text-sm text-[#4A5B60] mt-0.5">
-                    Government-issued credentials for identity verification and anti-fraud compliance.
+                    {kycStatus === 'APPROVED' || activeMember.identityVerified
+                      ? 'Your identity has been verified. Wallet, transfers, cards, and loans are unlocked.'
+                      : kycStatus === 'PENDING'
+                      ? 'Your documents are with compliance for review. You will be notified when a decision is made.'
+                      : 'Government-issued credentials for identity verification and anti-fraud compliance.'}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowDocUploadModal(true)}
-                  className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#0A3D3F] text-white text-xs font-semibold hover:bg-[#0F5557]"
-                >
-                  <Upload className="w-4 h-4" />
-                  Upload Document
-                </button>
+                {kycStatus !== 'APPROVED' && !activeMember.identityVerified && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDocUploadModal(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-[#0A3D3F] text-white text-xs font-semibold hover:bg-[#0F5557]"
+                  >
+                    <Upload className="w-4 h-4" />
+                    {kycStatus === 'PENDING' || kycStatus === 'NEEDS_MORE_INFO'
+                      ? 'Upload updated document'
+                      : 'Upload Document'}
+                  </button>
+                )}
               </div>
 
               <div className="space-y-3">
+                {activeMember.documents.length === 0 && !kycSubmission && (
+                  <div className="p-8 border-2 border-dashed border-[#DCE5E3] rounded-2xl text-center text-sm text-[#4A5B60]">
+                    No identity documents on file yet.
+                  </div>
+                )}
                 {activeMember.documents.map((doc) => (
                   <div
                     key={doc.id}
@@ -1669,8 +2151,11 @@ export const MemberDashboard: React.FC = () => {
                       {activeMember.country} ({activeMember.countryCode}) • Role: {currentUser?.role || 'MEMBER'}
                     </div>
                   </div>
-                  <span className="text-xs font-mono font-semibold text-[#0E1B1F]">
-                    {activeMember.id}
+                  <span
+                    className="text-xs font-mono font-semibold text-[#0E1B1F] text-right max-w-[220px] break-all"
+                    title={activeMember.bankIdentity?.accountNumberDisplay || activeMember.id}
+                  >
+                    {activeMember.bankIdentity?.accountNumberDisplay || activeMember.id}
                   </span>
                 </div>
 
@@ -1730,7 +2215,10 @@ export const MemberDashboard: React.FC = () => {
                       <button
                         type="button"
                         onClick={async () => {
-                          const sent = await notifyTransferExecuted('Amara O. (LF-000089)', '$250.00');
+                          const sent = await notifyTransferExecuted(
+                            `Amara O. (${activeMember.bankIdentity?.accountNumberDisplay || 'account'})`,
+                            '$250.00',
+                          );
                           showToast(sent ? 'Dispatched Transfer Push Notification' : 'Notification permission required', sent ? 'info' : 'warning');
                         }}
                         className="p-2.5 rounded-xl border border-[#DCE5E3] bg-[#F4F7F6] hover:bg-[#E3F3F1] text-xs font-semibold text-[#0E1B1F] transition text-left cursor-pointer min-h-[44px]"
@@ -1865,7 +2353,7 @@ export const MemberDashboard: React.FC = () => {
                   type="text"
                   value={sendRecipient}
                   onChange={(e) => setSendRecipient(e.target.value)}
-                  placeholder="e.g. Amara O. or LF-000089"
+                  placeholder="e.g. name, email, or account number"
                   className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm"
                 />
               </div>
@@ -1917,6 +2405,110 @@ export const MemberDashboard: React.FC = () => {
                   type="button"
                   onClick={() => setShowSendModal(false)}
                   className="px-4 py-3 rounded-xl border border-[#BCCAC8] text-sm font-semibold hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 2. WITHDRAW MODAL */}
+      {showWithdrawModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5">
+            <div className="flex items-start justify-between">
+              <div>
+                <span className="text-xs font-bold text-[#0F766E] uppercase tracking-wider">
+                  Cash out
+                </span>
+                <h3 className="font-display font-bold text-xl text-[#0E1B1F] mt-0.5">
+                  Withdraw to bank
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowWithdrawModal(false)}
+                className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Close Withdraw modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="text-xs font-semibold text-[#4A5B60]">Destination account</label>
+                <select
+                  aria-label="Withdrawal destination"
+                  value={withdrawDestination}
+                  onChange={(e) => setWithdrawDestination(e.target.value)}
+                  className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm bg-white"
+                >
+                  <option value="ACH · Routing 021000021 · ••9401">
+                    ACH · Routing 021000021 · ••9401
+                  </option>
+                  <option value="SEPA · IBAN ••4821">SEPA · IBAN ••4821</option>
+                  <option value="Faster Payments · ••1190">Faster Payments · ••1190</option>
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-[#4A5B60]">Amount</label>
+                  <input
+                    type="number"
+                    value={withdrawAmount}
+                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    placeholder="0.00"
+                    className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-[#4A5B60]">Currency</label>
+                  <select
+                    aria-label="Withdrawal currency"
+                    value={withdrawCurrency}
+                    onChange={(e) => setWithdrawCurrency(e.target.value as Currency)}
+                    className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm font-semibold bg-white"
+                  >
+                    <option value="USD">USD ($)</option>
+                    <option value="CAD">CAD (C$)</option>
+                    <option value="GBP">GBP (£)</option>
+                    <option value="EUR">EUR (€)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="text-xs text-[#4A5B60]">
+                Available:{' '}
+                <strong>
+                  {withdrawCurrency === 'USD'
+                    ? '$'
+                    : withdrawCurrency === 'CAD'
+                    ? 'C$'
+                    : withdrawCurrency === 'GBP'
+                    ? '£'
+                    : '€'}
+                  {activeMember.wallets[withdrawCurrency].toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                  })}
+                </strong>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={handleWithdraw}
+                  className="flex-1 py-3 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-sm cursor-pointer"
+                >
+                  Confirm withdrawal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowWithdrawModal(false)}
+                  className="px-4 py-3 rounded-xl border border-[#BCCAC8] text-sm font-semibold hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -2226,8 +2818,9 @@ export const MemberDashboard: React.FC = () => {
                   aria-label="Select KYC document type"
                   value={kycType}
                   onChange={(e) => {
-                    const val = e.target.value as any;
+                    const val = e.target.value as typeof kycType;
                     setKycType(val);
+                    setKycBackFile(null);
                     setKycDocName(
                       val === 'passport'
                         ? 'Passport'
@@ -2257,26 +2850,65 @@ export const MemberDashboard: React.FC = () => {
                 />
               </div>
 
-              <label className="border-2 border-dashed border-[#BCCAC8] rounded-xl p-6 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6] text-center cursor-pointer hover:border-[#0A3D3F] transition">
-                <Upload className="w-7 h-7 text-[#0F766E]" />
-                <span className="text-xs font-semibold text-slate-700">
-                  {kycFile ? kycFile.name : 'Select document scan (PDF, JPG, PNG)'}
-                </span>
-                <span className="text-[11px] text-slate-500">Max size 25MB · Encrypted at rest</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp,application/pdf"
-                  className="sr-only"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0] || null;
-                    if (file && file.size > 25 * 1024 * 1024) {
-                      showToast('File must be 25MB or smaller.', 'warning');
-                      return;
-                    }
-                    setKycFile(file);
-                  }}
-                />
-              </label>
+              <div>
+                <label className="text-xs font-semibold text-[#4A5B60] block mb-1.5">
+                  {kycNeedsBothSides ? 'Front side' : 'Document scan'}
+                </label>
+                <label className="border-2 border-dashed border-[#BCCAC8] rounded-xl p-5 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6] text-center cursor-pointer hover:border-[#0A3D3F] transition">
+                  <Upload className="w-6 h-6 text-[#0F766E]" />
+                  <span className="text-xs font-semibold text-slate-700">
+                    {kycFrontFile
+                      ? kycFrontFile.name
+                      : kycNeedsBothSides
+                        ? 'Upload front of document (PDF, JPG, PNG)'
+                        : 'Select document scan (PDF, JPG, PNG)'}
+                  </span>
+                  <span className="text-[11px] text-slate-500">Max size 25MB · Encrypted at rest</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                    className="sr-only"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      if (file && file.size > 25 * 1024 * 1024) {
+                        showToast('File must be 25MB or smaller.', 'warning');
+                        return;
+                      }
+                      setKycFrontFile(file);
+                    }}
+                  />
+                </label>
+              </div>
+
+              {kycNeedsBothSides && (
+                <div>
+                  <label className="text-xs font-semibold text-[#4A5B60] block mb-1.5">
+                    Back side
+                  </label>
+                  <label className="border-2 border-dashed border-[#BCCAC8] rounded-xl p-5 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6] text-center cursor-pointer hover:border-[#0A3D3F] transition">
+                    <Upload className="w-6 h-6 text-[#0F766E]" />
+                    <span className="text-xs font-semibold text-slate-700">
+                      {kycBackFile
+                        ? kycBackFile.name
+                        : 'Upload back of document (PDF, JPG, PNG)'}
+                    </span>
+                    <span className="text-[11px] text-slate-500">Max size 25MB · Encrypted at rest</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      className="sr-only"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        if (file && file.size > 25 * 1024 * 1024) {
+                          showToast('File must be 25MB or smaller.', 'warning');
+                          return;
+                        }
+                        setKycBackFile(file);
+                      }}
+                    />
+                  </label>
+                </div>
+              )}
 
               <div className="flex gap-2 pt-2">
                 <button
@@ -2395,6 +3027,84 @@ export const MemberDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* ── MOBILE BOTTOM NAV ── */}
+      <nav
+        aria-label="Primary member navigation"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#DCE5E3] pb-[env(safe-area-inset-bottom)]"
+      >
+        <div className="grid grid-cols-5 gap-0.5 px-1 pt-1.5 pb-1.5">
+          {memberBottomItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = memberTab === item.id;
+            const isFeatured = Boolean(item.featured);
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectMemberTab(item.id)}
+                className={`relative flex flex-col items-center justify-center gap-0.5 min-h-[52px] rounded-xl transition cursor-pointer ${
+                  isFeatured
+                    ? isActive
+                      ? 'text-[#0A3D3F] bg-[#F5B942] shadow-sm'
+                      : 'text-[#8A5A00] bg-[#FFF1CC] hover:bg-[#F5B942]/80'
+                    : isActive
+                      ? 'text-[#0A3D3F]'
+                      : 'text-[#4A5B60] hover:text-[#0A3D3F] hover:bg-[#F4F7F6]'
+                }`}
+              >
+                {isFeatured && !isActive && (
+                  <span className="absolute -top-0.5 right-1.5 w-1.5 h-1.5 rounded-full bg-[#F5B942] ring-2 ring-white" />
+                )}
+                <Icon
+                  className={`w-[20px] h-[20px] ${
+                    isFeatured
+                      ? isActive
+                        ? 'text-[#0A3D3F]'
+                        : 'text-[#B8860B]'
+                      : isActive
+                        ? 'text-[#0A3D3F]'
+                        : 'text-[#8FA5A3]'
+                  }`}
+                  strokeWidth={isActive || isFeatured ? 2.4 : 2}
+                />
+                <span
+                  className={`text-[10px] leading-none ${
+                    isFeatured || isActive ? 'font-bold' : 'font-medium'
+                  }`}
+                >
+                  {item.label}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="More menu"
+            aria-expanded={mobileNavOpen}
+            className={`flex flex-col items-center justify-center gap-0.5 min-h-[52px] rounded-xl transition cursor-pointer ${
+              memberMoreActive
+                ? 'text-[#0A3D3F]'
+                : 'text-[#4A5B60] hover:text-[#0A3D3F] hover:bg-[#F4F7F6]'
+            }`}
+          >
+            <Menu
+              className={`w-[20px] h-[20px] ${
+                memberMoreActive ? 'text-[#0A3D3F]' : 'text-[#8FA5A3]'
+              }`}
+              strokeWidth={memberMoreActive ? 2.4 : 2}
+            />
+            <span
+              className={`text-[10px] leading-none ${
+                memberMoreActive ? 'font-bold' : 'font-medium'
+              }`}
+            >
+              More
+            </span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 };

@@ -27,20 +27,55 @@ import {
   AlertTriangle,
   HelpCircle,
   ShieldCheck,
+  Menu,
+  Pencil,
+  Trash2,
+  CreditCard,
+  type LucideIcon,
 } from 'lucide-react';
 import { AdminDocumentViewerModal } from './AdminDocumentViewerModal';
-import { KycSubmission, KycSubmissionStatus } from '../types';
+import { AdminVirtualCardsPanel } from './AdminVirtualCardsPanel';
+import { AdminTab, KycSubmission, KycSubmissionStatus, MemberProfile } from '../types';
 import {
   PanelSwap,
   FadeUp,
+  AnimatePresence,
   motion,
   MOTION,
   usePrefersReducedMotion,
 } from '../motion';
 
+const ADMIN_NAV_ITEMS: Array<{
+  id: AdminTab;
+  label: string;
+  shortLabel?: string;
+  icon: LucideIcon;
+  accent?: string;
+}> = [
+  { id: 'members', label: 'Members', icon: Users },
+  { id: 'identity_reviews', label: 'Identity reviews', shortLabel: 'KYC', icon: FileCheck },
+  { id: 'fund_wallet', label: 'Fund wallets', shortLabel: 'Fund', icon: Coins, accent: 'text-[#F5B942]' },
+  { id: 'virtual_cards', label: 'Virtual cards', shortLabel: 'Cards', icon: CreditCard },
+  { id: 'loan_applications', label: 'Loan applications', shortLabel: 'Loans', icon: Landmark },
+  { id: 'ledger', label: 'Ledger', icon: BookOpen },
+  { id: 'audit_log', label: 'Audit log', icon: History },
+  { id: 'country_settings', label: 'Country settings', icon: Globe },
+];
+
+/** Primary mobile bottom-nav destinations (keep to 4 + More). */
+const ADMIN_BOTTOM_TABS: AdminTab[] = [
+  'members',
+  'identity_reviews',
+  'fund_wallet',
+  'loan_applications',
+];
+
 export const AdminPortal: React.FC = () => {
   const prefersReducedMotion = usePrefersReducedMotion();
   const navIndicatorTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: MOTION.duration.base, ease: MOTION.ease.out };
+  const drawerTransition = prefersReducedMotion
     ? { duration: 0 }
     : { duration: MOTION.duration.base, ease: MOTION.ease.out };
   const {
@@ -63,10 +98,67 @@ export const AdminPortal: React.FC = () => {
     logoutUser,
     adminKycQueue,
     fetchAdminKycQueue,
+    fetchAdminDashboardStats,
+    fetchAdminLedger,
+    adminDashboardStats,
+    authToken,
     reviewKycSubmission,
+    updateAdminMember,
+    deleteAdminMember,
+    updateAdminKyc,
+    deleteAdminKyc,
     getAdminDocumentSignedUrl,
   } = useApp();
 
+  /** Registered members only — never include the signed-in super admin. */
+  const registeredMembers = members.filter(
+    (m) =>
+      m.id !== currentUser?.id &&
+      m.id !== '00000000-0000-0000-0000-000000000001' &&
+      (!currentUser?.email ||
+        m.email.toLowerCase() !== currentUser.email.toLowerCase()),
+  );
+
+  // Prefer API dashboard-stats (durable DB-backed) so every tile matches server truth
+  const totalMembersCount =
+    typeof adminDashboardStats?.totalMembers === 'number'
+      ? adminDashboardStats.totalMembers
+      : registeredMembers.length;
+  const verifiedMembersCount =
+    typeof adminDashboardStats?.verifiedMembers === 'number'
+      ? adminDashboardStats.verifiedMembers
+      : registeredMembers.filter((m) => m.identityVerified).length;
+  const pendingKycCount =
+    typeof adminDashboardStats?.pendingKycCount === 'number'
+      ? adminDashboardStats.pendingKycCount
+      : adminKycQueue.filter((s) => s.status === 'PENDING').length;
+  const pendingLoansCount =
+    typeof adminDashboardStats?.pendingLoansCount === 'number'
+      ? adminDashboardStats.pendingLoansCount
+      : loanApplications.filter((l) => l.status === 'under_review' || l.status === 'submitted')
+          .length;
+  const totalFundsUsd =
+    typeof adminDashboardStats?.totalFundsUsd === 'number'
+      ? adminDashboardStats.totalFundsUsd
+      : typeof adminDashboardStats?.totalTestFunds?.USD?.totalMinor === 'number'
+        ? adminDashboardStats.totalTestFunds.USD.totalMinor / 100
+        : registeredMembers.reduce((acc, m) => acc + (m.wallets?.USD || 0), 0);
+
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileNavOpen(false);
+    };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [mobileNavOpen]);
   // "Fund a wallet" form state
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [amountStr, setAmountStr] = useState<string>('');
@@ -103,23 +195,199 @@ export const AdminPortal: React.FC = () => {
   const [adjudicationReason, setAdjudicationReason] = useState<string>('');
   const [isAdjudicating, setIsAdjudicating] = useState<boolean>(false);
 
-  // Prefetch KYC queue for dashboard tiles; refresh when Identity tab is open
-  useEffect(() => {
-    if (currentUser?.role === 'SUPER_ADMIN') {
-      fetchAdminKycQueue();
+  const [editingMember, setEditingMember] = useState<MemberProfile | null>(null);
+  const [memberEditForm, setMemberEditForm] = useState({
+    fullName: '',
+    email: '',
+    countryCode: 'US',
+    emailVerified: false,
+  });
+  const [memberEditSaving, setMemberEditSaving] = useState(false);
+  const [deletingMemberId, setDeletingMemberId] = useState<string | null>(null);
+
+  const [editingKyc, setEditingKyc] = useState<KycSubmission | null>(null);
+  const [kycEditForm, setKycEditForm] = useState({
+    memberName: '',
+    memberEmail: '',
+    countryCode: 'US',
+    documentType: 'PASSPORT',
+    status: 'PENDING' as KycSubmissionStatus,
+    reviewerNote: '',
+    rejectionReason: '',
+  });
+  const [kycEditSaving, setKycEditSaving] = useState(false);
+  const [deletingKycId, setDeletingKycId] = useState<string | null>(null);
+
+  const openEditMember = (m: MemberProfile) => {
+    setEditingMember(m);
+    setMemberEditForm({
+      fullName: m.name,
+      email: m.email,
+      countryCode: m.countryCode || 'US',
+      emailVerified: m.emailVerified !== false,
+    });
+  };
+
+  const saveMemberEdit = async () => {
+    if (!editingMember) return;
+    setMemberEditSaving(true);
+    try {
+      await updateAdminMember(editingMember.id, {
+        fullName: memberEditForm.fullName.trim(),
+        email: memberEditForm.email.trim(),
+        countryCode: memberEditForm.countryCode,
+        emailVerified: memberEditForm.emailVerified,
+      });
+      setEditingMember(null);
+    } catch (err: any) {
+      showToast(err.message || 'Could not update member.', 'warning');
+    } finally {
+      setMemberEditSaving(false);
     }
-  }, [currentUser?.role, adminTab]);
+  };
+
+  const confirmDeleteMember = async () => {
+    if (!deletingMemberId) return;
+    try {
+      await deleteAdminMember(deletingMemberId);
+      if (selectedMemberId === deletingMemberId) setSelectedMemberId('');
+      setDeletingMemberId(null);
+    } catch (err: any) {
+      showToast(err.message || 'Could not delete member.', 'warning');
+    }
+  };
+
+  const openEditKyc = (sub: KycSubmission) => {
+    setEditingKyc(sub);
+    setKycEditForm({
+      memberName: sub.memberName || '',
+      memberEmail: sub.memberEmail || '',
+      countryCode: sub.countryCode || 'US',
+      documentType: sub.documentType || 'PASSPORT',
+      status: sub.status,
+      reviewerNote: sub.reviewerNote || '',
+      rejectionReason: sub.rejectionReason || '',
+    });
+  };
+
+  const saveKycEdit = async () => {
+    if (!editingKyc) return;
+    setKycEditSaving(true);
+    try {
+      await updateAdminKyc(editingKyc.id, {
+        memberName: kycEditForm.memberName.trim(),
+        memberEmail: kycEditForm.memberEmail.trim(),
+        countryCode: kycEditForm.countryCode,
+        documentType: kycEditForm.documentType,
+        status: kycEditForm.status,
+        reviewerNote: kycEditForm.reviewerNote.trim() || null,
+        rejectionReason: kycEditForm.rejectionReason.trim() || null,
+      });
+      setEditingKyc(null);
+    } catch (err: any) {
+      showToast(err.message || 'Could not update KYC.', 'warning');
+    } finally {
+      setKycEditSaving(false);
+    }
+  };
+
+  const confirmDeleteKyc = async () => {
+    if (!deletingKycId) return;
+    try {
+      await deleteAdminKyc(deletingKycId);
+      setDeletingKycId(null);
+    } catch (err: any) {
+      showToast(err.message || 'Could not delete KYC.', 'warning');
+    }
+  };
+  const [pendingFundingRequests, setPendingFundingRequests] = useState<
+    Array<{
+      id: string;
+      memberId: string;
+      memberName: string;
+      memberEmail: string;
+      amountFormatted: string;
+      amountMinor: number;
+      currency: string;
+      reason: string;
+      status: string;
+      createdAt: string;
+    }>
+  >([]);
+  const [reviewingFundingId, setReviewingFundingId] = useState<string | null>(null);
+
+  const refreshFundingRequests = async () => {
+    if (!authToken) return;
+    try {
+      const res = await fetch('/admin/funding-requests?status=PENDING', {
+        headers: { Authorization: `Bearer ${authToken}` },
+      });
+      const text = await res.text();
+      if (!res.ok || !text) return;
+      const data = JSON.parse(text);
+      setPendingFundingRequests(Array.isArray(data.requests) ? data.requests : []);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Prefetch KYC queue + registered members directory for admin
+  useEffect(() => {
+    if (currentUser?.role !== 'SUPER_ADMIN' || !authToken) return;
+    void fetchAdminKycQueue();
+    void fetchAdminDashboardStats(authToken);
+    if (adminTab === 'fund_wallet') {
+      void refreshFundingRequests();
+    }
+    if (adminTab === 'ledger') {
+      void fetchAdminLedger(authToken);
+    }
+  }, [currentUser?.role, adminTab, authToken]);
+
+  const reviewFundingRequest = async (id: string, decision: 'APPROVE' | 'REJECT') => {
+    if (!authToken) return;
+    try {
+      setReviewingFundingId(id);
+      const res = await fetch(`/admin/funding-requests/${id}/review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify({
+          decision,
+          note: decision === 'REJECT' ? 'Declined by administrator' : 'Approved from member request queue',
+        }),
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!res.ok) throw new Error(data.message || 'Review failed');
+      showToast(
+        decision === 'APPROVE'
+          ? `Funded ${data.amountFormatted} for ${data.memberName}.`
+          : `Rejected funding request for ${data.memberName}.`,
+        decision === 'APPROVE' ? 'success' : 'info',
+      );
+      await refreshFundingRequests();
+      await fetchAdminDashboardStats(authToken);
+    } catch (err: any) {
+      showToast(err.message || 'Could not review funding request.', 'warning');
+    } finally {
+      setReviewingFundingId(null);
+    }
+  };
 
   // Keep fund-wallet selection aligned with the members list
   useEffect(() => {
-    if (!members.length) {
+    if (!registeredMembers.length) {
       setSelectedMemberId('');
       return;
     }
-    if (!selectedMemberId || !members.some((m) => m.id === selectedMemberId)) {
-      setSelectedMemberId(members[0].id);
+    if (!selectedMemberId || !registeredMembers.some((m) => m.id === selectedMemberId)) {
+      setSelectedMemberId(registeredMembers[0]!.id);
     }
-  }, [members, selectedMemberId]);
+  }, [registeredMembers, selectedMemberId]);
 
   // Guests landing on /admin: open sign-in immediately
   useEffect(() => {
@@ -137,7 +405,7 @@ export const AdminPortal: React.FC = () => {
   };
 
   const currentMember =
-    members.find((m) => m.id === selectedMemberId) || members[0];
+    registeredMembers.find((m) => m.id === selectedMemberId) || registeredMembers[0];
 
   const parsedAmount = parseFloat(amountStr) || 0;
   const currencySymbol =
@@ -236,13 +504,145 @@ export const AdminPortal: React.FC = () => {
     );
   }
 
+  const activeNavLabel =
+    ADMIN_NAV_ITEMS.find((item) => item.id === adminTab)?.label || 'Admin';
+  const adminBottomItems = ADMIN_NAV_ITEMS.filter((item) =>
+    ADMIN_BOTTOM_TABS.includes(item.id),
+  );
+  const adminMoreActive = !ADMIN_BOTTOM_TABS.includes(adminTab);
+
+  const selectAdminTab = (tab: AdminTab) => {
+    setAdminTab(tab);
+    setMobileNavOpen(false);
+  };
+
+  const renderNavButtons = (layoutId: string) =>
+    ADMIN_NAV_ITEMS.map((item) => {
+      const Icon = item.icon;
+      const isActive = adminTab === item.id;
+      return (
+        <button
+          key={item.id}
+          type="button"
+          onClick={() => selectAdminTab(item.id)}
+          className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
+            isActive
+              ? 'text-white font-semibold'
+              : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
+          }`}
+        >
+          {isActive && (
+            <motion.span
+              layoutId={layoutId}
+              className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+              transition={navIndicatorTransition}
+            />
+          )}
+          <Icon
+            className={`relative z-10 w-4 h-4 shrink-0 ${
+              item.accent || 'text-[#8FA5A3]'
+            }`}
+          />
+          <span className="relative z-10">{item.label}</span>
+        </button>
+      );
+    });
+
   return (
     <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
+      {/* ── MOBILE TOP BAR ── */}
+      <header className="md:hidden sticky top-0 z-40 bg-[#0E1B1F] text-white border-b border-white/10">
+        <div className="flex items-center gap-2.5 px-4 min-h-[52px]">
+          <LumenLogo size={26} textColor="#FFFFFF" />
+          <div className="min-w-0">
+            <div className="text-[10px] font-mono font-bold tracking-[0.12em] text-[#8FA5A3] uppercase leading-none">
+              Admin
+            </div>
+            <div className="text-sm font-semibold truncate leading-tight mt-0.5">
+              {activeNavLabel}
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* ── MOBILE DRAWER ── */}
+      <AnimatePresence>
+        {mobileNavOpen && (
+          <div className="md:hidden fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Admin menu">
+            <motion.button
+              type="button"
+              aria-label="Close menu"
+              className="absolute inset-0 bg-[#0E1B1F]/55 backdrop-blur-[2px] cursor-pointer"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={drawerTransition}
+              onClick={() => setMobileNavOpen(false)}
+            />
+            <motion.aside
+              className="absolute inset-y-0 left-0 w-[min(100%,300px)] bg-[#0E1B1F] text-white shadow-2xl flex flex-col border-r border-white/10"
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={drawerTransition}
+            >
+              <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+                <div className="flex flex-col gap-0.5">
+                  <LumenLogo size={28} textColor="#FFFFFF" />
+                  <span className="text-[11px] font-mono font-bold tracking-[0.1em] text-[#8FA5A3] uppercase pl-9 -mt-0.5">
+                    Admin
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMobileNavOpen(false)}
+                  aria-label="Close admin menu"
+                  className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <nav
+                aria-label="Admin navigation"
+                className="flex-1 overflow-y-auto px-3 py-4 flex flex-col gap-1.5 text-[15px] font-medium"
+              >
+                {renderNavButtons('admin-nav-active-mobile')}
+              </nav>
+
+              <div className="px-3 pb-5 pt-2 border-t border-white/10 flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileNavOpen(false);
+                    openSecurityModal();
+                  }}
+                  className="w-full flex items-center gap-2.5 text-xs font-semibold text-white bg-[#1C3436] hover:bg-[#0F766E] p-2.5 rounded-xl border border-white/10 transition cursor-pointer min-h-[44px]"
+                >
+                  <KeyRound className="w-4 h-4 text-[#F5B942]" />
+                  <span>Admin Security & MFA</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileNavOpen(false);
+                    void logoutUser();
+                  }}
+                  className="w-full flex items-center gap-2.5 text-xs font-semibold text-[#C9D6D5] hover:text-white hover:bg-[#1C3436]/60 p-2.5 rounded-xl border border-white/10 transition cursor-pointer min-h-[44px]"
+                >
+                  <LogOut className="w-4 h-4 shrink-0" />
+                  <span>Sign out</span>
+                </button>
+              </div>
+            </motion.aside>
+          </div>
+        )}
+      </AnimatePresence>
+
       <div className="flex-1 flex flex-col md:flex-row min-w-0">
-        {/* ── ADMIN SIDEBAR (FROM DESIGN) ── */}
-        <aside className="w-full md:w-[260px] shrink-0 bg-[#0E1B1F] text-white p-7 md:py-7 md:px-5 flex flex-col justify-between gap-7 border-r border-slate-900">
+        {/* ── DESKTOP SIDEBAR ── */}
+        <aside className="hidden md:flex w-[260px] shrink-0 bg-[#0E1B1F] text-white p-7 md:py-7 md:px-5 flex-col justify-between gap-7 border-r border-slate-900">
           <div className="flex flex-col gap-6">
-            {/* Logo with Admin label */}
             <div className="flex flex-col gap-1">
               <a
                 href="#"
@@ -259,154 +659,15 @@ export const AdminPortal: React.FC = () => {
               </div>
             </div>
 
-            {/* Admin Nav */}
             <nav aria-label="Admin navigation" className="flex flex-col gap-1.5 text-[15px] font-medium">
-              <button
-                type="button"
-                onClick={() => setAdminTab('members')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'members'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'members' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Users className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span className="relative z-10">Members</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('identity_reviews')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'identity_reviews'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'identity_reviews' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <FileCheck className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span className="relative z-10">Identity reviews</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('fund_wallet')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'fund_wallet'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'fund_wallet' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436] shadow-xs"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Coins className="relative z-10 w-4 h-4 shrink-0 text-[#F5B942]" />
-                <span className="relative z-10">Fund wallets</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('loan_applications')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'loan_applications'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'loan_applications' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Landmark className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span className="relative z-10">Loan applications</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('ledger')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'ledger'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'ledger' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <BookOpen className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span className="relative z-10">Ledger</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('audit_log')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'audit_log'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'audit_log' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <History className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span className="relative z-10">Audit log</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setAdminTab('country_settings')}
-                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
-                  adminTab === 'country_settings'
-                    ? 'text-white font-semibold'
-                    : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
-                }`}
-              >
-                {adminTab === 'country_settings' && (
-                  <motion.span
-                    layoutId="admin-nav-active"
-                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
-                    transition={navIndicatorTransition}
-                  />
-                )}
-                <Globe className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span className="relative z-10">Country settings</span>
-              </button>
+              {renderNavButtons('admin-nav-active')}
             </nav>
           </div>
 
           <div className="flex flex-col gap-2 pt-2">
             <button
               type="button"
-              onClick={openSecurityModal}
+              onClick={() => openSecurityModal()}
               className="w-full flex items-center gap-2.5 text-xs font-semibold text-white bg-[#1C3436] hover:bg-[#0F766E] p-2.5 rounded-xl border border-white/10 transition cursor-pointer min-h-[44px]"
             >
               <KeyRound className="w-4 h-4 text-[#F5B942]" />
@@ -421,11 +682,10 @@ export const AdminPortal: React.FC = () => {
               <span>Sign out</span>
             </button>
           </div>
-
         </aside>
 
         {/* ── ADMIN WORKSPACE CONTENT ── */}
-        <main className="flex-1 min-w-0 p-6 sm:p-8 flex flex-col gap-7 max-w-[1280px]">
+        <main className="flex-1 min-w-0 p-5 sm:p-8 pb-24 md:pb-8 flex flex-col gap-7 max-w-[1280px]">
           <PanelSwap panelKey={adminTab} className="flex flex-col gap-7">
           {/* Header */}
           <div className="flex flex-col gap-1">
@@ -433,6 +693,7 @@ export const AdminPortal: React.FC = () => {
               {adminTab === 'fund_wallet' && 'Fund a wallet'}
               {adminTab === 'members' && 'Registered Members'}
               {adminTab === 'identity_reviews' && 'KYC Identity Review Queue'}
+              {adminTab === 'virtual_cards' && 'Member Virtual Cards'}
               {adminTab === 'loan_applications' && 'Credit & Underwriting Queue'}
               {adminTab === 'ledger' && 'Immutable Double-Entry Ledger'}
               {adminTab === 'audit_log' && 'Compliance Audit Log'}
@@ -443,6 +704,7 @@ export const AdminPortal: React.FC = () => {
                 'Every credit is posted to the ledger with a reference and recorded in the audit log.'}
               {adminTab === 'members' && 'View member accounts, verified documents, and balances.'}
               {adminTab === 'identity_reviews' && 'Review uploaded passport and national ID scans.'}
+              {adminTab === 'virtual_cards' && 'Freeze, unfreeze, suspend, edit limits, credit, or delete member cards.'}
               {adminTab === 'loan_applications' && 'Underwrite auto and mortgage loans with fund disbursement.'}
               {adminTab === 'ledger' && 'Balanced debits and credits across funding pools and member wallets.'}
               {adminTab === 'audit_log' && 'Full chronological record of administrative actions and timestamps.'}
@@ -454,7 +716,7 @@ export const AdminPortal: React.FC = () => {
               OBSERVABILITY: ADMIN DASHBOARD OF KEY COUNTS
               (Members, Pending KYC, Pending Loans, Total Funds)
              ══════════════════════════════════════════════════════ */}
-          <section aria-label="Key Platform Observability Metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+          <section aria-label="Key Platform Observability Metrics" className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
             {/* 1. Members Count */}
             <div
               onClick={() => setAdminTab('members')}
@@ -468,16 +730,46 @@ export const AdminPortal: React.FC = () => {
               </div>
               <div>
                 <div className="text-2xl sm:text-3xl font-display font-bold text-[#0E1B1F]">
-                  {members.length}
+                  {totalMembersCount}
                 </div>
                 <div className="text-[11px] text-[#0F766E] font-medium flex items-center gap-1 mt-0.5">
                   <CheckCircle2 className="w-3 h-3" />
-                  <span>{members.filter((m) => m.identityVerified).length} verified members</span>
+                  <span>
+                    {verifiedMembersCount} verified member
+                    {verifiedMembersCount === 1 ? '' : 's'}
+                  </span>
                 </div>
               </div>
             </div>
 
-            {/* 2. Pending KYC Count */}
+            {/* 2. Virtual Cards Count */}
+            <div
+              onClick={() => setAdminTab('virtual_cards')}
+              className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DCE5E3] hover:border-[#0A3D3F] transition-all cursor-pointer shadow-xs flex flex-col justify-between gap-2"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#4A5B60] uppercase tracking-wider">Virtual Cards</span>
+                <div className="w-8 h-8 rounded-lg bg-[#E3F3F1] flex items-center justify-center text-[#0A3D3F]">
+                  <CreditCard className="w-4 h-4" />
+                </div>
+              </div>
+              <div>
+                <div className="text-2xl sm:text-3xl font-display font-bold text-[#0E1B1F]">
+                  {typeof (adminDashboardStats as any)?.totalCardsCount === 'number'
+                    ? (adminDashboardStats as any).totalCardsCount
+                    : '—'}
+                </div>
+                <div className="text-[11px] text-[#0F766E] font-medium flex items-center gap-1 mt-0.5">
+                  <CheckCircle2 className="w-3 h-3" />
+                  <span>
+                    {(adminDashboardStats as any)?.activeCardsCount ?? 0} active card
+                    {((adminDashboardStats as any)?.activeCardsCount ?? 0) === 1 ? '' : 's'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 3. Pending KYC Count */}
             <div
               onClick={() => setAdminTab('identity_reviews')}
               className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DCE5E3] hover:border-[#0A3D3F] transition-all cursor-pointer shadow-xs flex flex-col justify-between gap-2"
@@ -490,7 +782,7 @@ export const AdminPortal: React.FC = () => {
               </div>
               <div>
                 <div className="text-2xl sm:text-3xl font-display font-bold text-[#0E1B1F]">
-                  {adminKycQueue.filter((s) => s.status === 'PENDING').length}
+                  {pendingKycCount}
                 </div>
                 <div className="text-[11px] text-[#5A4100] font-medium flex items-center gap-1 mt-0.5">
                   <Clock className="w-3 h-3" />
@@ -512,7 +804,7 @@ export const AdminPortal: React.FC = () => {
               </div>
               <div>
                 <div className="text-2xl sm:text-3xl font-display font-bold text-[#0E1B1F]">
-                  {loanApplications.filter((l) => l.status === 'under_review').length}
+                  {pendingLoansCount}
                 </div>
                 <div className="text-[11px] text-[#0F766E] font-medium flex items-center gap-1 mt-0.5">
                   <Clock className="w-3 h-3" />
@@ -534,7 +826,11 @@ export const AdminPortal: React.FC = () => {
               </div>
               <div>
                 <div className="text-xl sm:text-2xl font-display font-bold text-[#0E1B1F] truncate">
-                  ${members.reduce((acc, m) => acc + (m.wallets?.USD || 0), 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                  $
+                  {totalFundsUsd.toLocaleString('en-US', {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 0,
+                  })}
                   <span className="text-xs font-mono font-medium text-[#4A5B60] ml-1">USD</span>
                 </div>
                 <div className="text-[11px] text-[#0A5C47] font-medium flex items-center gap-1 mt-0.5">
@@ -549,6 +845,75 @@ export const AdminPortal: React.FC = () => {
               VIEW: FUND A WALLET (THE EXACT MOCKUP SCREEN)
              ══════════════════════════════════════════════════════ */}
           {adminTab === 'fund_wallet' && (
+            <div className="flex flex-col gap-5">
+              {pendingFundingRequests.length > 0 && (
+                <div className="bg-white border border-[#DCE5E3] rounded-3xl p-6 shadow-xs flex flex-col gap-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="font-display font-bold text-lg text-[#0E1B1F]">
+                        Member funding requests
+                      </h3>
+                      <p className="text-xs text-[#4A5B60] mt-0.5">
+                        Approve to credit the member wallet from the system ledger.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void refreshFundingRequests()}
+                      className="text-xs font-semibold text-[#0A3D3F] hover:underline cursor-pointer"
+                    >
+                      Refresh
+                    </button>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[640px] text-sm border-collapse">
+                      <thead>
+                        <tr className="text-left text-xs font-semibold text-[#4A5B60] border-b border-[#DCE5E3]">
+                          <th className="py-2 pr-3">Member</th>
+                          <th className="py-2 pr-3">Amount</th>
+                          <th className="py-2 pr-3">Reason</th>
+                          <th className="py-2 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pendingFundingRequests.map((r) => (
+                          <tr key={r.id} className="border-b border-[#EDF2F1]">
+                            <td className="py-3 pr-3">
+                              <div className="font-semibold text-[#0E1B1F]">{r.memberName}</div>
+                              <div className="text-[11px] text-[#8FA5A3] font-mono">{r.memberEmail}</div>
+                            </td>
+                            <td className="py-3 pr-3 font-mono font-semibold whitespace-nowrap">
+                              {r.amountFormatted}
+                            </td>
+                            <td className="py-3 pr-3 text-[#4A5B60] text-xs max-w-[240px]">
+                              {r.reason}
+                            </td>
+                            <td className="py-3 text-right whitespace-nowrap">
+                              <button
+                                type="button"
+                                disabled={reviewingFundingId === r.id}
+                                onClick={() => void reviewFundingRequest(r.id, 'APPROVE')}
+                                className="px-3 py-1.5 rounded-lg bg-[#0A3D3F] text-white text-xs font-semibold hover:bg-[#0F5557] disabled:opacity-60 mr-1.5 cursor-pointer"
+                              >
+                                Approve
+                              </button>
+                              <button
+                                type="button"
+                                disabled={reviewingFundingId === r.id}
+                                onClick={() => void reviewFundingRequest(r.id, 'REJECT')}
+                                className="px-3 py-1.5 rounded-lg border border-[#BCCAC8] text-xs font-semibold hover:bg-slate-50 disabled:opacity-60 cursor-pointer"
+                              >
+                                Reject
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
             <div className="flex flex-col lg:flex-row gap-5 items-start">
               {/* Left Column: The Interactive Form (Flex 3) */}
               <form
@@ -562,7 +927,7 @@ export const AdminPortal: React.FC = () => {
                       Member Lookup
                     </label>
                     <span className="text-xs text-[#4A5B60]">
-                      {members.filter((m) => m.identityVerified).length} verified of {members.length} members
+                      {verifiedMembersCount} verified of {totalMembersCount} members
                     </span>
                   </div>
 
@@ -573,7 +938,7 @@ export const AdminPortal: React.FC = () => {
                       type="text"
                       value={memberSearchQuery}
                       onChange={(e) => setMemberSearchQuery(e.target.value)}
-                      placeholder="Search by name, ID (e.g. LF-000124), or country..."
+                      placeholder="Search by name, account number, or country..."
                       className="w-full min-h-[44px] pl-10 pr-3.5 border border-[#BCCAC8] rounded-xl text-sm text-[#0E1B1F] bg-[#F4F7F6]/50 focus:bg-white focus:outline-none focus:border-[#0A3D3F]"
                     />
                   </div>
@@ -583,20 +948,28 @@ export const AdminPortal: React.FC = () => {
                     value={selectedMemberId}
                     onChange={(e) => setSelectedMemberId(e.target.value)}
                     className="min-h-[48px] border border-[#BCCAC8] rounded-xl px-3.5 text-[15px] text-[#0E1B1F] bg-white font-medium focus:outline-none focus:border-[#0A3D3F]"
+                    disabled={!registeredMembers.length}
                   >
-                    {members
+                    {!registeredMembers.length && (
+                      <option value="">No registered members yet</option>
+                    )}
+                    {registeredMembers
                       .filter((m) => {
                         if (!memberSearchQuery.trim()) return true;
-                        const q = memberSearchQuery.toLowerCase();
+                        const q = memberSearchQuery.toLowerCase().replace(/[\s\-·]/g, '');
+                        const acct = (m.bankIdentity?.accountNumberNormalized || '').toLowerCase();
+                        const acctDisplay = (m.bankIdentity?.accountNumberDisplay || '').toLowerCase();
                         return (
-                          m.name.toLowerCase().includes(q) ||
-                          m.id.toLowerCase().includes(q) ||
-                          m.country.toLowerCase().includes(q)
+                          m.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
+                          m.id.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
+                          m.country.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
+                          acct.includes(q) ||
+                          acctDisplay.replace(/[\s\-·]/g, '').includes(q)
                         );
                       })
                       .map((m) => (
                         <option key={m.id} value={m.id}>
-                          {m.name} ({m.id}) · {m.country} · {m.identityVerified ? '✓ Verified' : '⚠️ Unverified'}
+                          {m.name} ({m.bankIdentity?.accountNumberDisplay || m.id.slice(0, 8)}) · {m.country} · {m.identityVerified ? '✓ Verified' : '⚠️ Unverified'}
                         </option>
                       ))}
                   </select>
@@ -605,34 +978,51 @@ export const AdminPortal: React.FC = () => {
                 {/* Selected Member Profile Preview Card (From Design) */}
                 <div className="flex flex-wrap items-center gap-3.5 p-4 rounded-2xl bg-[#F4F7F6] border border-[#DCE5E3]">
                   <div className="w-11 h-11 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base shrink-0">
-                    {currentMember.avatarInitials}
+                    {currentMember?.avatarInitials || '—'}
                   </div>
                   <div className="flex flex-col gap-0.5 flex-1 min-w-[160px]">
                     <span className="font-semibold text-[15px] text-[#0E1B1F]">
-                      {currentMember.name}
+                      {currentMember?.name || 'No member selected'}
                     </span>
-                    <span className="text-[13px] text-[#4A5B60] flex items-center gap-1.5">
-                      <span>{currentMember.country}</span>
-                      <span>·</span>
-                      <span
-                        className={`font-semibold ${
-                          currentMember.identityVerified ? 'text-[#0A4F4A]' : 'text-[#8A5000]'
-                        }`}
-                      >
-                        {currentMember.identityVerified ? '✓ Identity Verified' : '⚠️ Identity Pending'}
+                    <span className="text-[13px] text-[#4A5B60] flex items-center gap-1.5 flex-wrap">
+                      <span>{currentMember?.country || '—'}</span>
+                      {currentMember && (
+                        <>
+                          <span>·</span>
+                          <span
+                            className={`font-semibold ${
+                              currentMember.identityVerified ? 'text-[#0A4F4A]' : 'text-[#8A5000]'
+                            }`}
+                          >
+                            {currentMember.identityVerified
+                              ? '✓ Identity Verified'
+                              : '⚠️ Identity Pending'}
+                          </span>
+                        </>
+                      )}
+                    </span>
+                    {currentMember?.bankIdentity?.accountNumberDisplay && (
+                      <span className="text-[11px] font-mono text-[#0A3D3F] mt-0.5">
+                        {currentMember.bankIdentity.accountNumberDisplay}
+                        {currentMember.bankIdentity.scheme
+                          ? ` · ${currentMember.bankIdentity.scheme}`
+                          : ''}
                       </span>
-                    </span>
+                    )}
                   </div>
                   <div className="flex flex-col gap-0.5 text-right">
                     <span className="text-xs text-[#4A5B60]">Current USD balance</span>
                     <span className="font-bold text-[17px] text-[#0E1B1F] font-mono">
-                      ${currentMember.wallets.USD.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      $
+                      {(currentMember?.wallets.USD || 0).toLocaleString('en-US', {
+                        minimumFractionDigits: 2,
+                      })}
                     </span>
                   </div>
                 </div>
 
                 {/* Unverified Member Notice (Hard Rule & Acceptance Criteria) */}
-                {!currentMember.identityVerified && (
+                {currentMember && !currentMember.identityVerified && (
                   <div className="flex items-start gap-3 p-3.5 rounded-2xl bg-[#FFF1CC] border border-[#F0D58A] text-[#5A4100] text-xs leading-relaxed">
                     <AlertTriangle className="w-4 h-4 text-[#5A4100] shrink-0 mt-0.5" />
                     <div>
@@ -859,6 +1249,7 @@ export const AdminPortal: React.FC = () => {
                 </div>
               </div>
             </div>
+            </div>
           )}
 
           {/* ══════════════════════════════════════════════════════
@@ -871,15 +1262,26 @@ export const AdminPortal: React.FC = () => {
                   Registered Members
                 </h2>
                 <span className="text-xs text-[#4A5B60] font-medium">
-                  Total: {members.length} members
+                  Total: {totalMembersCount} members
                 </span>
               </div>
 
+              {!registeredMembers.length ? (
+                <div className="rounded-2xl border border-dashed border-[#BCCAC8] bg-[#F4F7F6]/60 px-6 py-12 text-center">
+                  <Users className="w-8 h-8 text-[#8FA5A3] mx-auto mb-3" />
+                  <p className="font-semibold text-[#0E1B1F]">No registered members yet</p>
+                  <p className="text-sm text-[#4A5B60] mt-1 max-w-md mx-auto">
+                    Member accounts appear here after they register. Super administrators are
+                    operators and are never listed in this directory.
+                  </p>
+                </div>
+              ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[650px] border-collapse text-sm">
                   <thead>
                     <tr className="text-left text-[#4A5B60] text-xs font-semibold tracking-wider border-b border-[#DCE5E3]">
                       <th className="py-2.5 px-3">MEMBER</th>
+                      <th className="py-2.5 px-3">ACCOUNT</th>
                       <th className="py-2.5 px-3">COUNTRY</th>
                       <th className="py-2.5 px-3">VERIFICATION</th>
                       <th className="py-2.5 px-3">USD BALANCE</th>
@@ -888,7 +1290,7 @@ export const AdminPortal: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {members.map((m, memberIndex) => (
+                    {registeredMembers.map((m, memberIndex) => (
                       <motion.tr
                         key={m.id}
                         className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/60"
@@ -910,9 +1312,13 @@ export const AdminPortal: React.FC = () => {
                             </div>
                             <div>
                               <div>{m.name}</div>
-                              <div className="text-xs font-mono text-slate-500 font-normal">{m.id}</div>
+                              <div className="text-xs font-mono text-slate-500 font-normal">{m.email}</div>
                             </div>
                           </div>
+                        </td>
+                        <td className="py-3.5 px-3 font-mono text-xs text-[#0E1B1F]">
+                          <div>{m.bankIdentity?.accountNumberDisplay || '—'}</div>
+                          <div className="text-[10px] text-slate-500">{m.bankIdentity?.scheme || ''}</div>
                         </td>
                         <td className="py-3.5 px-3 text-[#4A5B60]">{m.country}</td>
                         <td className="py-3.5 px-3">
@@ -933,22 +1339,56 @@ export const AdminPortal: React.FC = () => {
                           C${m.wallets.CAD} · £{m.wallets.GBP} · €{m.wallets.EUR}
                         </td>
                         <td className="py-3.5 px-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedMemberId(m.id);
-                              setAdminTab('fund_wallet');
-                            }}
-                            className="px-3 py-1.5 rounded-lg bg-[#0A3D3F] text-white text-xs font-semibold hover:bg-[#0F5557]"
-                          >
-                            Fund Wallet
-                          </button>
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => openEditMember(m)}
+                              className="px-2.5 py-1.5 rounded-lg border border-[#DCE5E3] text-[#0A3D3F] text-xs font-semibold hover:bg-[#F4F7F6] inline-flex items-center gap-1"
+                              title="Edit member"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDeletingMemberId(m.id)}
+                              className="px-2.5 py-1.5 rounded-lg border border-red-200 text-red-700 text-xs font-semibold hover:bg-red-50 inline-flex items-center gap-1"
+                              title="Delete member"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMemberId(m.id);
+                                setAdminTab('virtual_cards');
+                              }}
+                              className="px-2.5 py-1.5 rounded-lg border border-[#DCE5E3] text-[#0A3D3F] text-xs font-semibold hover:bg-[#E3F3F1] inline-flex items-center gap-1"
+                              title="Manage this member's virtual cards"
+                            >
+                              <CreditCard className="w-3.5 h-3.5 text-[#0F766E]" />
+                              Cards
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMemberId(m.id);
+                                setAdminTab('fund_wallet');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-[#F5B942] text-[#0A3D3F] text-xs font-bold hover:bg-[#E0A82E] shadow-sm inline-flex items-center gap-1"
+                              title="Fund this member wallet"
+                            >
+                              <Coins className="w-3.5 h-3.5" />
+                              Fund
+                            </button>
+                          </div>
                         </td>
                       </motion.tr>
                     ))}
                   </tbody>
                 </table>
               </div>
+              )}
             </div>
           )}
 
@@ -1250,46 +1690,70 @@ export const AdminPortal: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Action buttons (Approve, Reject, Request More Info) */}
-                      {sub.status === 'PENDING' && (
-                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#DCE5E3]">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAdjudicationTarget({ submission: sub, action: 'APPROVE' });
-                              setAdjudicationReason('Biometrics, checksum, and credentials verified successfully.');
-                            }}
-                            className="px-4 py-2.5 rounded-xl bg-[#0A3D3F] hover:bg-[#072F30] text-white font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs min-h-[44px]"
-                          >
-                            <ShieldCheck className="w-4 h-4 text-[#F5B942]" />
-                            <span>Approve & Verify</span>
-                          </button>
+                      {/* Action buttons */}
+                      <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#DCE5E3]">
+                        {sub.status === 'PENDING' && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAdjudicationTarget({ submission: sub, action: 'APPROVE' });
+                                setAdjudicationReason(
+                                  'Biometrics, checksum, and credentials verified successfully.',
+                                );
+                              }}
+                              className="px-4 py-2.5 rounded-xl bg-[#0A3D3F] hover:bg-[#072F30] text-white font-bold text-xs transition flex items-center gap-1.5 cursor-pointer shadow-xs min-h-[44px]"
+                            >
+                              <ShieldCheck className="w-4 h-4 text-[#F5B942]" />
+                              <span>Approve & Verify</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAdjudicationTarget({ submission: sub, action: 'REJECT' });
-                              setAdjudicationReason('');
-                            }}
-                            className="px-4 py-2.5 rounded-xl bg-white border border-red-200 hover:bg-red-50 text-red-700 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
-                          >
-                            <X className="w-4 h-4" />
-                            <span>Decline</span>
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAdjudicationTarget({ submission: sub, action: 'REJECT' });
+                                setAdjudicationReason('');
+                              }}
+                              className="px-4 py-2.5 rounded-xl bg-white border border-red-200 hover:bg-red-50 text-red-700 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                            >
+                              <X className="w-4 h-4" />
+                              <span>Decline</span>
+                            </button>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setAdjudicationTarget({ submission: sub, action: 'REQUEST_MORE_INFO' });
-                              setAdjudicationReason('');
-                            }}
-                            className="px-4 py-2.5 rounded-xl bg-white border border-[#DCE5E3] hover:bg-slate-50 text-slate-700 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
-                          >
-                            <HelpCircle className="w-4 h-4 text-[#0F766E]" />
-                            <span>Request Info</span>
-                          </button>
-                        </div>
-                      )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setAdjudicationTarget({
+                                  submission: sub,
+                                  action: 'REQUEST_MORE_INFO',
+                                });
+                                setAdjudicationReason('');
+                              }}
+                              className="px-4 py-2.5 rounded-xl bg-white border border-[#DCE5E3] hover:bg-slate-50 text-slate-700 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                            >
+                              <HelpCircle className="w-4 h-4 text-[#0F766E]" />
+                              <span>Request Info</span>
+                            </button>
+                          </>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => openEditKyc(sub)}
+                          className="px-4 py-2.5 rounded-xl bg-white border border-[#DCE5E3] hover:bg-[#F4F7F6] text-[#0A3D3F] font-bold text-xs transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                        >
+                          <Pencil className="w-4 h-4" />
+                          <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDeletingKycId(sub.id)}
+                          className="px-4 py-2.5 rounded-xl bg-white border border-red-200 hover:bg-red-50 text-red-700 font-bold text-xs transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
                     </div>
                   ));
                 })()}
@@ -1378,7 +1842,7 @@ export const AdminPortal: React.FC = () => {
              ══════════════════════════════════════════════════════ */}
           {adminTab === 'ledger' && (
             <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-5">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <h2 className="font-display font-bold text-xl text-[#0E1B1F]">
                     General Ledger Postings
@@ -1387,8 +1851,16 @@ export const AdminPortal: React.FC = () => {
                     Immutable double-entry debit and credit records for financial integrity.
                   </p>
                 </div>
-                <span className="text-xs font-mono bg-[#E3F3F1] text-[#0A4F4A] px-2.5 py-1 rounded font-semibold">
-                  Zero Invariant Mismatch
+                <span
+                  className={`text-xs font-mono px-2.5 py-1 rounded font-semibold ${
+                    adminDashboardStats?.ledgerZeroSumPassed === false
+                      ? 'bg-[#FFF1CC] text-[#5A4100]'
+                      : 'bg-[#E3F3F1] text-[#0A4F4A]'
+                  }`}
+                >
+                  {adminDashboardStats?.ledgerZeroSumPassed === false
+                    ? 'Zero Invariant Mismatch'
+                    : 'Ledger zero-sum verified'}
                 </span>
               </div>
 
@@ -1405,29 +1877,41 @@ export const AdminPortal: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {ledgerPostings.map((lp) => (
-                      <tr key={lp.id} className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/50">
-                        <td className="py-3 px-2 font-mono text-xs">
-                          <div className="font-semibold text-[#0E1B1F]">{lp.reference}</div>
-                          <div className="text-slate-500">{lp.date}</div>
-                        </td>
-                        <td className="py-3 px-2 text-[#0E1B1F] max-w-[200px] truncate">
-                          {lp.description}
-                        </td>
-                        <td className="py-3 px-2 text-slate-700 font-medium">
-                          {lp.debitAccount}
-                        </td>
-                        <td className="py-3 px-2 text-right font-mono font-semibold">
-                          ${lp.debitAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </td>
-                        <td className="py-3 px-2 text-slate-700 font-medium">
-                          {lp.creditAccount}
-                        </td>
-                        <td className="py-3 px-2 text-right font-mono font-semibold text-[#0A5C47]">
-                          ${lp.creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    {ledgerPostings.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="py-10 px-2 text-center text-sm text-[#4A5B60]"
+                        >
+                          No ledger postings yet. Fund a verified member wallet to create the first
+                          double-entry record.
                         </td>
                       </tr>
-                    ))}
+                    ) : (
+                      ledgerPostings.map((lp) => (
+                        <tr key={lp.id} className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/50">
+                          <td className="py-3 px-2 font-mono text-xs">
+                            <div className="font-semibold text-[#0E1B1F]">{lp.reference}</div>
+                            <div className="text-slate-500">{lp.date}</div>
+                          </td>
+                          <td className="py-3 px-2 text-[#0E1B1F] max-w-[200px] truncate">
+                            {lp.description}
+                          </td>
+                          <td className="py-3 px-2 text-slate-700 font-medium">
+                            {lp.debitAccount}
+                          </td>
+                          <td className="py-3 px-2 text-right font-mono font-semibold">
+                            ${lp.debitAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </td>
+                          <td className="py-3 px-2 text-slate-700 font-medium">
+                            {lp.creditAccount}
+                          </td>
+                          <td className="py-3 px-2 text-right font-mono font-semibold text-[#0A5C47]">
+                            ${lp.creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -1559,6 +2043,10 @@ export const AdminPortal: React.FC = () => {
                 ))}
               </div>
             </div>
+          )}
+
+          {adminTab === 'virtual_cards' && (
+            <AdminVirtualCardsPanel initialMemberId={selectedMemberId} />
           )}
           </PanelSwap>
         </main>
@@ -1726,6 +2214,354 @@ export const AdminPortal: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Edit member modal */}
+      <AnimatePresence>
+        {editingMember && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-[#0E1B1F]/50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full max-w-md bg-white rounded-2xl border border-[#DCE5E3] shadow-xl p-6 space-y-4"
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 8 }}
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="font-display font-bold text-lg text-[#0E1B1F]">Edit member</h3>
+                <button type="button" onClick={() => setEditingMember(null)} aria-label="Close">
+                  <X className="w-5 h-5 text-slate-500" />
+                </button>
+              </div>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Full name
+                <input
+                  value={memberEditForm.fullName}
+                  onChange={(e) => setMemberEditForm((f) => ({ ...f, fullName: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Email
+                <input
+                  type="email"
+                  value={memberEditForm.email}
+                  onChange={(e) => setMemberEditForm((f) => ({ ...f, email: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Country
+                <select
+                  value={memberEditForm.countryCode}
+                  onChange={(e) =>
+                    setMemberEditForm((f) => ({ ...f, countryCode: e.target.value }))
+                  }
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm bg-white"
+                >
+                  {countries.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.name} ({c.code})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-xs font-semibold text-[#4A5B60]">
+                <input
+                  type="checkbox"
+                  checked={memberEditForm.emailVerified}
+                  onChange={(e) =>
+                    setMemberEditForm((f) => ({ ...f, emailVerified: e.target.checked }))
+                  }
+                />
+                Email verified
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingMember(null)}
+                  className="px-4 py-2 rounded-xl border border-[#DCE5E3] text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={memberEditSaving}
+                  onClick={() => void saveMemberEdit()}
+                  className="px-4 py-2 rounded-xl bg-[#0A3D3F] text-white text-xs font-semibold disabled:opacity-60"
+                >
+                  {memberEditSaving ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete member confirm */}
+      <AnimatePresence>
+        {deletingMemberId && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-[#0E1B1F]/50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div className="w-full max-w-sm bg-white rounded-2xl border border-[#DCE5E3] p-6 space-y-4">
+              <h3 className="font-display font-bold text-lg text-[#0E1B1F]">Delete member?</h3>
+              <p className="text-sm text-[#4A5B60]">
+                This permanently removes the account and linked KYC records. This cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeletingMemberId(null)}
+                  className="px-4 py-2 rounded-xl border border-[#DCE5E3] text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmDeleteMember()}
+                  className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-semibold"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit KYC modal */}
+      <AnimatePresence>
+        {editingKyc && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-[#0E1B1F]/50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div className="w-full max-w-lg bg-white rounded-2xl border border-[#DCE5E3] shadow-xl p-6 space-y-3 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display font-bold text-lg text-[#0E1B1F]">Edit KYC record</h3>
+                <button type="button" onClick={() => setEditingKyc(null)} aria-label="Close">
+                  <X className="w-5 h-5 text-slate-500" />
+                </button>
+              </div>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Applicant name
+                <input
+                  value={kycEditForm.memberName}
+                  onChange={(e) => setKycEditForm((f) => ({ ...f, memberName: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Email
+                <input
+                  type="email"
+                  value={kycEditForm.memberEmail}
+                  onChange={(e) => setKycEditForm((f) => ({ ...f, memberEmail: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block text-xs font-semibold text-[#4A5B60]">
+                  Country
+                  <select
+                    value={kycEditForm.countryCode}
+                    onChange={(e) =>
+                      setKycEditForm((f) => ({ ...f, countryCode: e.target.value }))
+                    }
+                    className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm bg-white"
+                  >
+                    {countries.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.code}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs font-semibold text-[#4A5B60]">
+                  Status
+                  <select
+                    value={kycEditForm.status}
+                    onChange={(e) =>
+                      setKycEditForm((f) => ({
+                        ...f,
+                        status: e.target.value as KycSubmissionStatus,
+                      }))
+                    }
+                    className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm bg-white"
+                  >
+                    <option value="PENDING">Pending</option>
+                    <option value="APPROVED">Approved</option>
+                    <option value="REJECTED">Rejected</option>
+                    <option value="NEEDS_MORE_INFO">Needs more info</option>
+                  </select>
+                </label>
+              </div>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Document type
+                <select
+                  value={kycEditForm.documentType}
+                  onChange={(e) =>
+                    setKycEditForm((f) => ({ ...f, documentType: e.target.value }))
+                  }
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm bg-white"
+                >
+                  <option value="PASSPORT">Passport</option>
+                  <option value="DRIVERS_LICENSE">Driver&apos;s license</option>
+                  <option value="ID_CARD">ID card</option>
+                  <option value="RESIDENCE_PERMIT">Residence permit</option>
+                </select>
+              </label>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Reviewer note
+                <textarea
+                  value={kycEditForm.reviewerNote}
+                  onChange={(e) =>
+                    setKycEditForm((f) => ({ ...f, reviewerNote: e.target.value }))
+                  }
+                  rows={2}
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm"
+                />
+              </label>
+              <label className="block text-xs font-semibold text-[#4A5B60]">
+                Rejection reason
+                <textarea
+                  value={kycEditForm.rejectionReason}
+                  onChange={(e) =>
+                    setKycEditForm((f) => ({ ...f, rejectionReason: e.target.value }))
+                  }
+                  rows={2}
+                  className="mt-1 w-full px-3 py-2 rounded-xl border border-[#DCE5E3] text-sm"
+                />
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingKyc(null)}
+                  className="px-4 py-2 rounded-xl border border-[#DCE5E3] text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={kycEditSaving}
+                  onClick={() => void saveKycEdit()}
+                  className="px-4 py-2 rounded-xl bg-[#0A3D3F] text-white text-xs font-semibold disabled:opacity-60"
+                >
+                  {kycEditSaving ? 'Saving…' : 'Save changes'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete KYC confirm */}
+      <AnimatePresence>
+        {deletingKycId && (
+          <motion.div
+            className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-[#0E1B1F]/50"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div className="w-full max-w-sm bg-white rounded-2xl border border-[#DCE5E3] p-6 space-y-4">
+              <h3 className="font-display font-bold text-lg text-[#0E1B1F]">Delete KYC record?</h3>
+              <p className="text-sm text-[#4A5B60]">
+                Removes this identity submission. The member can submit again later.
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeletingKycId(null)}
+                  className="px-4 py-2 rounded-xl border border-[#DCE5E3] text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmDeleteKyc()}
+                  className="px-4 py-2 rounded-xl bg-red-600 text-white text-xs font-semibold"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── MOBILE BOTTOM NAV ── */}
+      <nav
+        aria-label="Primary admin navigation"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#DCE5E3] pb-[env(safe-area-inset-bottom)]"
+      >
+        <div className="grid grid-cols-5 gap-0.5 px-1 pt-1.5 pb-1.5">
+          {adminBottomItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = adminTab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectAdminTab(item.id)}
+                className={`flex flex-col items-center justify-center gap-0.5 min-h-[52px] rounded-xl transition cursor-pointer ${
+                  isActive
+                    ? 'text-[#0A3D3F]'
+                    : 'text-[#4A5B60] hover:text-[#0A3D3F] hover:bg-[#F4F7F6]'
+                }`}
+              >
+                <Icon
+                  className={`w-[20px] h-[20px] ${
+                    isActive ? 'text-[#0A3D3F]' : 'text-[#8FA5A3]'
+                  }`}
+                  strokeWidth={isActive ? 2.4 : 2}
+                />
+                <span
+                  className={`text-[10px] leading-none ${
+                    isActive ? 'font-bold' : 'font-medium'
+                  }`}
+                >
+                  {item.shortLabel || item.label}
+                </span>
+              </button>
+            );
+          })}
+          <button
+            type="button"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="More menu"
+            aria-expanded={mobileNavOpen}
+            className={`flex flex-col items-center justify-center gap-0.5 min-h-[52px] rounded-xl transition cursor-pointer ${
+              adminMoreActive
+                ? 'text-[#0A3D3F]'
+                : 'text-[#4A5B60] hover:text-[#0A3D3F] hover:bg-[#F4F7F6]'
+            }`}
+          >
+            <Menu
+              className={`w-[20px] h-[20px] ${
+                adminMoreActive ? 'text-[#0A3D3F]' : 'text-[#8FA5A3]'
+              }`}
+              strokeWidth={adminMoreActive ? 2.4 : 2}
+            />
+            <span
+              className={`text-[10px] leading-none ${
+                adminMoreActive ? 'font-bold' : 'font-medium'
+              }`}
+            >
+              More
+            </span>
+          </button>
+        </div>
+      </nav>
     </div>
   );
 };

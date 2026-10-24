@@ -1,4 +1,5 @@
 export * from './money';
+export * from './banking';
 export * from './schemas/user.schema';
 export * from './schemas/country.schema';
 export * from './schemas/ledger.schema';

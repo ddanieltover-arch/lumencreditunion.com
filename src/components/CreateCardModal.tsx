@@ -15,7 +15,7 @@ export const CreateCardModal: React.FC = () => {
   } = useApp();
 
   const [currency, setCurrency] = useState<CardCurrency>('USD');
-  const [cardholderName, setCardholderName] = useState(activeMember.name || 'Amara Okafor');
+  const [cardholderName, setCardholderName] = useState(activeMember?.name || '');
   const [dailyLimitMajor, setDailyLimitMajor] = useState<number>(1000);
   const [monthlyLimitMajor, setMonthlyLimitMajor] = useState<number>(5000);
   const [isSubmitting, setIsSubmitting] = useState(false);

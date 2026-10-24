@@ -10,13 +10,15 @@ import { SecuritySettingsModal } from './components/SecuritySettingsModal';
 import { KycVerificationModal } from './components/KycVerificationModal';
 import { OneTimeCredentialsModal } from './components/OneTimeCredentialsModal';
 import { CardLimitsModal } from './components/CardLimitsModal';
-import { SimulatePurchaseModal } from './components/SimulatePurchaseModal';
 import { CreateCardModal } from './components/CreateCardModal';
 import { LegalModals } from './components/LegalModals';
 
 const MainAppContent: React.FC = () => {
   const {
     currentView,
+    setCurrentView,
+    currentUser,
+    activeMember,
     isAuthModalOpen,
     closeAuthModal,
     authModalMode,
@@ -27,6 +29,16 @@ const MainAppContent: React.FC = () => {
     securityModalTab,
     closeSecurityModal,
   } = useApp();
+
+  // Never show the member dashboard without a real signed-in member
+  useEffect(() => {
+    if (currentView !== 'member') return;
+    if (currentUser?.role === 'MEMBER' && activeMember) return;
+    setCurrentView('landing');
+    if (!currentUser) {
+      openAuthModal('login');
+    }
+  }, [currentView, currentUser, activeMember, setCurrentView, openAuthModal]);
 
   // Live email deep-links: ?verifyEmail=… and ?resetToken=…
   useEffect(() => {
@@ -77,7 +89,9 @@ const MainAppContent: React.FC = () => {
       <div className="flex-1 flex flex-col">
         {currentView === 'landing' && <LandingPage />}
         {currentView === 'contact' && <ContactPage />}
-        {currentView === 'member' && <MemberDashboard />}
+        {currentView === 'member' && currentUser?.role === 'MEMBER' && activeMember && (
+          <MemberDashboard />
+        )}
         {currentView === 'admin' && <AdminPortal />}
       </div>
 
@@ -98,7 +112,6 @@ const MainAppContent: React.FC = () => {
 
       <OneTimeCredentialsModal />
       <CardLimitsModal />
-      <SimulatePurchaseModal />
       <CreateCardModal />
 
       <LegalModals />

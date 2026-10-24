@@ -8,12 +8,14 @@ export class KycController {
   // Member: Get current KYC status
   getStatus = async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const submission = this.kycService.getMemberSubmission(req.user!.id);
-      const isApproved = this.kycService.isMemberKycApproved(req.user!.id);
+      await this.kycService.ensureReady();
+      const email = req.user!.email;
+      const submission = this.kycService.getMemberSubmission(req.user!.id, email);
+      const isApproved = this.kycService.isMemberKycApproved(req.user!.id, email);
       res.json({
         isApproved,
         submission,
-        status: submission ? submission.status : 'NOT_SUBMITTED',
+        status: submission ? submission.status : isApproved ? 'APPROVED' : 'NOT_SUBMITTED',
       });
     } catch (err) {
       next(err);
@@ -23,6 +25,7 @@ export class KycController {
   // Member: Submit identity documents
   submit = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await this.kycService.ensureReady();
       const ip = (req.ip || '127.0.0.1').toString();
       const submission = await this.kycService.submitKyc(
         req.user!.id,
@@ -60,6 +63,7 @@ export class KycController {
   // SUPER_ADMIN: Get Review Queue
   getQueue = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await this.kycService.ensureReady();
       const statusFilter = req.query.status as KycSubmissionStatus | undefined;
       const queue = this.kycService.getAdminQueue(statusFilter);
       res.json(queue);
@@ -137,6 +141,7 @@ export class KycController {
   // SUPER_ADMIN: Review decision (Approve, Reject, Request More Info)
   review = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await this.kycService.ensureReady();
       const { id } = req.params;
       const ip = (req.ip || '127.0.0.1').toString();
       const submission = await this.kycService.reviewSubmission(
@@ -147,6 +152,37 @@ export class KycController {
         req.headers['user-agent'],
       );
       res.json(submission);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  // SUPER_ADMIN: Edit KYC submission
+  update = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await this.kycService.ensureReady();
+      const { id } = req.params;
+      const ip = (req.ip || '127.0.0.1').toString();
+      const submission = await this.kycService.adminUpdateSubmission(
+        id,
+        req.body,
+        req.user!.id,
+        ip,
+      );
+      res.json(submission);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  // SUPER_ADMIN: Delete KYC submission
+  remove = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      await this.kycService.ensureReady();
+      const { id } = req.params;
+      const ip = (req.ip || '127.0.0.1').toString();
+      const result = await this.kycService.deleteSubmission(id, req.user!.id, ip);
+      res.json(result);
     } catch (err) {
       next(err);
     }

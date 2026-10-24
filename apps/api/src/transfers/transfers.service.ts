@@ -299,49 +299,42 @@ export class TransfersService {
   // ---------------------------------------------------------------------------
   async lookupRecipient(query: string) {
     const cleanQuery = query.trim().toLowerCase();
-    const user = this.authService.getUserById(cleanQuery) ||
+    const byAccount = this.authService.findUserByAccountNumber(query.trim());
+    const user =
+      byAccount ||
+      this.authService.getUserById(cleanQuery) ||
       Array.from((this.authService as any).users.values()).find(
         (u: any) =>
           u.email.toLowerCase() === cleanQuery ||
           u.id.toLowerCase() === cleanQuery ||
-          (u.memberId && u.memberId.toLowerCase() === cleanQuery),
+          (u.accountNumberNormalized &&
+            u.accountNumberNormalized.toLowerCase() === cleanQuery.replace(/[\s\-./]/g, '')) ||
+          (u.accountNumberDisplay &&
+            u.accountNumberDisplay.toLowerCase().replace(/[\s\-·]/g, '') ===
+              cleanQuery.replace(/[\s\-·./]/g, '')),
       );
 
     if (!user) {
-      // Check seeded members
-      const demoRecipient = cleanQuery.includes('amara')
-        ? { id: '00000000-0000-0000-0000-000000000002', name: 'Amara Okafor', email: 'amara.o@lumenfield.test', country: 'US', verified: true }
-        : cleanQuery.includes('lf-000089') || cleanQuery.includes('kwame')
-        ? { id: 'LF-000089', name: 'Kwame Mensah', email: 'kwame.m@lumenfield.test', country: 'CA', verified: true }
-        : cleanQuery.includes('elena') || cleanQuery.includes('lf-000104')
-        ? { id: 'LF-000104', name: 'Elena Rostova', email: 'elena.r@lumenfield.test', country: 'GB', verified: true }
-        : null;
+      return null;
+    }
 
-      if (!demoRecipient) {
-        return null;
-      }
-
-      return {
-        id: demoRecipient.id,
-        recipientId: demoRecipient.id,
-        name: demoRecipient.name,
-        maskedEmail: demoRecipient.email.replace(/(.{2})(.*)(@.*)/, '$1***$3'),
-        country: demoRecipient.country,
-        identityVerified: demoRecipient.verified,
-        lumenfieldTag: demoRecipient.id.startsWith('LF-') ? demoRecipient.id : `LF-${demoRecipient.id.slice(-6).toUpperCase()}`,
-      };
+    const record = user as any;
+    if (record.role === 'MEMBER' && !record.accountNumberNormalized) {
+      this.authService.ensureBankIdentity(record);
     }
 
     return {
-      id: (user as any).id,
-      recipientId: (user as any).id,
-      name: (user as any).fullName,
-      maskedEmail: (user as any).email.replace(/(.{2})(.*)(@.*)/, '$1***$3'),
-      country: (user as any).countryCode,
+      id: record.id,
+      recipientId: record.id,
+      name: record.fullName,
+      maskedEmail: record.email.replace(/(.{2})(.*)(@.*)/, '$1***$3'),
+      country: record.countryCode,
       identityVerified:
-        (user as any).id === '00000000-0000-0000-0000-000000000002' ||
-        (this.kycService?.isMemberKycApproved((user as any).id) ?? true),
-      lumenfieldTag: `LF-${(user as any).id.slice(-6).toUpperCase()}`,
+        record.id === '00000000-0000-0000-0000-000000000002' ||
+        (this.kycService?.isMemberKycApproved(record.id) ?? true),
+      lumenfieldTag: record.accountNumberDisplay || record.accountNumberNormalized || record.id,
+      accountNumberDisplay: record.accountNumberDisplay || null,
+      bankScheme: record.bankScheme || null,
     };
   }
 

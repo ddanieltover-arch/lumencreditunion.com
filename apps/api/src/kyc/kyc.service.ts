@@ -7,6 +7,8 @@ import {
   ReviewKycInput,
   ReviewKycInputSchema,
   KycSubmissionStatus,
+  AdminUpdateKycInput,
+  AdminUpdateKycSchema,
 } from '@lumenfield/shared';
 import { PrivateDocumentStorageService } from './private-document-storage.service';
 import {
@@ -17,6 +19,11 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { CountriesService } from '../countries/countries.service';
 import { EmailService } from '../email/email.service';
+import {
+  loadPersistedKycSubmissions,
+  persistKycSubmission,
+  deletePersistedKycSubmission,
+} from './kyc-persistence';
 
 export interface MemberNotification {
   id: string;
@@ -28,12 +35,16 @@ export interface MemberNotification {
   read: boolean;
 }
 
+type GlobalKyc = typeof globalThis & { __lumenKycService?: KycService };
+
 export class KycService {
   private submissions = new Map<string, KycSubmission>(); // submissionId -> KycSubmission
   private memberSubmissionIndex = new Map<string, string>(); // memberId -> submissionId
+  private emailSubmissionIndex = new Map<string, string>(); // email -> submissionId
   private documentsIndex = new Map<string, { submissionId: string; document: KycDocument }>(); // docId -> doc
   private notifications = new Map<string, MemberNotification[]>(); // memberId -> notifications[]
   public memberKycStatus = new Map<string, KycSubmissionStatus>(); // memberId -> status override or cache
+  private hydratePromise: Promise<void>;
 
   constructor(
     private readonly storageService: PrivateDocumentStorageService = new PrivateDocumentStorageService(),
@@ -43,6 +54,52 @@ export class KycService {
     private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
     this.seedDemoSubmissions();
+    this.hydratePromise = this.hydrateFromStore();
+  }
+
+  /** Process-wide singleton so warm serverless instances keep KYC state. */
+  static getInstance(): KycService {
+    const g = globalThis as GlobalKyc;
+    if (!g.__lumenKycService) {
+      g.__lumenKycService = new KycService();
+    }
+    return g.__lumenKycService;
+  }
+
+  async ensureReady(): Promise<void> {
+    await this.hydratePromise;
+  }
+
+  private indexSubmission(submission: KycSubmission) {
+    this.submissions.set(submission.id, submission);
+    this.memberSubmissionIndex.set(submission.memberId, submission.id);
+    this.emailSubmissionIndex.set(submission.memberEmail.toLowerCase(), submission.id);
+    this.memberKycStatus.set(submission.memberId, submission.status);
+    for (const doc of submission.documents || []) {
+      this.documentsIndex.set(doc.id, { submissionId: submission.id, document: doc });
+    }
+  }
+
+  private async hydrateFromStore() {
+    try {
+      const persisted = await loadPersistedKycSubmissions();
+      for (const submission of persisted) {
+        // Prefer durable store over demo seed for the same member
+        this.indexSubmission(submission);
+      }
+      if (persisted.length) {
+        console.log(`[KycService] Restored ${persisted.length} KYC submission(s) from database.`);
+      }
+    } catch (err) {
+      console.error('[KycService] Hydration failed:', err);
+    }
+  }
+
+  private resolveSubmissionId(memberId: string, memberEmail?: string): string | undefined {
+    return (
+      this.memberSubmissionIndex.get(memberId) ||
+      (memberEmail ? this.emailSubmissionIndex.get(memberEmail.toLowerCase()) : undefined)
+    );
   }
 
   /**
@@ -107,12 +164,11 @@ export class KycService {
   /**
    * Check if member is approved (Used by server-side verification guard)
    */
-  isMemberKycApproved(memberId: string): boolean {
-    if (this.memberKycStatus.has(memberId)) {
-      return this.memberKycStatus.get(memberId) === 'APPROVED';
+  isMemberKycApproved(memberId: string, memberEmail?: string): boolean {
+    if (this.memberKycStatus.get(memberId) === 'APPROVED') {
+      return true;
     }
-    // Check if member has an approved submission
-    const subId = this.memberSubmissionIndex.get(memberId);
+    const subId = this.resolveSubmissionId(memberId, memberEmail);
     if (!subId) return false;
     const sub = this.submissions.get(subId);
     return sub?.status === 'APPROVED';
@@ -121,8 +177,8 @@ export class KycService {
   /**
    * Get member submission (Safe for member view: NO signed URLs or internal storage keys)
    */
-  getMemberSubmission(memberId: string): KycSubmission | null {
-    const subId = this.memberSubmissionIndex.get(memberId);
+  getMemberSubmission(memberId: string, memberEmail?: string): KycSubmission | null {
+    const subId = this.resolveSubmissionId(memberId, memberEmail);
     if (!subId) return null;
     const sub = this.submissions.get(subId);
     if (!sub) return null;
@@ -257,8 +313,8 @@ export class KycService {
       updatedAt: now,
     };
 
-    this.submissions.set(submissionId, submission);
-    this.memberSubmissionIndex.set(memberId, submissionId);
+    this.indexSubmission(submission);
+    void persistKycSubmission(submission);
 
     // 5. Audit Log (HARD RULE 6)
     await this.auditService.record({
@@ -480,7 +536,140 @@ export class KycService {
       });
     }
 
+    this.indexSubmission(submission);
+    await persistKycSubmission(submission);
+
     return submission;
+  }
+
+  /**
+   * SUPER_ADMIN: edit KYC submission fields / status without a formal adjudication email flow.
+   */
+  async adminUpdateSubmission(
+    submissionId: string,
+    input: AdminUpdateKycInput,
+    adminId: string,
+    ipAddress: string,
+  ): Promise<KycSubmission> {
+    await this.ensureReady();
+    const validated = AdminUpdateKycSchema.parse(input);
+    const submission = this.submissions.get(submissionId);
+    if (!submission) {
+      throw new Error('KYC submission not found.');
+    }
+
+    const before = {
+      memberName: submission.memberName,
+      memberEmail: submission.memberEmail,
+      countryCode: submission.countryCode,
+      documentType: submission.documentType,
+      status: submission.status,
+      reviewerNote: submission.reviewerNote,
+      rejectionReason: submission.rejectionReason,
+    };
+
+    // Drop old email index if email changes
+    if (validated.memberEmail && validated.memberEmail.toLowerCase() !== submission.memberEmail.toLowerCase()) {
+      this.emailSubmissionIndex.delete(submission.memberEmail.toLowerCase());
+      submission.memberEmail = validated.memberEmail.toLowerCase();
+    }
+    if (validated.memberName !== undefined) submission.memberName = validated.memberName.trim();
+    if (validated.countryCode !== undefined) submission.countryCode = validated.countryCode.toUpperCase();
+    if (validated.documentType !== undefined) submission.documentType = validated.documentType;
+    if (validated.reviewerNote !== undefined) submission.reviewerNote = validated.reviewerNote;
+    if (validated.rejectionReason !== undefined) submission.rejectionReason = validated.rejectionReason;
+    if (validated.status !== undefined) {
+      submission.status = validated.status;
+      submission.reviewedById = adminId;
+      submission.reviewedAt = new Date().toISOString();
+    }
+    submission.updatedAt = new Date().toISOString();
+
+    this.indexSubmission(submission);
+    await persistKycSubmission(submission);
+
+    await this.auditService.record({
+      actorId: adminId,
+      actorRole: 'SUPER_ADMIN',
+      action: 'ADMIN_UPDATE_MEMBER_STATUS',
+      targetType: 'KYC_SUBMISSION',
+      targetId: submission.id,
+      beforeState: before,
+      afterState: {
+        memberName: submission.memberName,
+        memberEmail: submission.memberEmail,
+        countryCode: submission.countryCode,
+        documentType: submission.documentType,
+        status: submission.status,
+        reviewerNote: submission.reviewerNote,
+        rejectionReason: submission.rejectionReason,
+      },
+      ipAddress,
+    });
+
+    return submission;
+  }
+
+  /**
+   * SUPER_ADMIN: permanently remove a KYC submission (and durable store row).
+   */
+  async deleteSubmission(
+    submissionId: string,
+    adminId: string,
+    ipAddress: string,
+  ): Promise<{ deleted: true; submissionId: string; memberId: string }> {
+    await this.ensureReady();
+    const submission = this.submissions.get(submissionId);
+    if (!submission) {
+      throw new Error('KYC submission not found.');
+    }
+
+    for (const doc of submission.documents || []) {
+      this.documentsIndex.delete(doc.id);
+    }
+    this.submissions.delete(submission.id);
+    this.memberSubmissionIndex.delete(submission.memberId);
+    this.emailSubmissionIndex.delete(submission.memberEmail.toLowerCase());
+    this.memberKycStatus.delete(submission.memberId);
+    await deletePersistedKycSubmission(submission.memberId);
+
+    await this.auditService.record({
+      actorId: adminId,
+      actorRole: 'SUPER_ADMIN',
+      action: 'ADMIN_UPDATE_MEMBER_STATUS',
+      targetType: 'KYC_SUBMISSION',
+      targetId: submissionId,
+      beforeState: {
+        memberId: submission.memberId,
+        memberEmail: submission.memberEmail,
+        status: submission.status,
+      },
+      afterState: { deleted: true },
+      ipAddress,
+    });
+
+    return { deleted: true, submissionId, memberId: submission.memberId };
+  }
+
+  /** Remove KYC for a member (used when the member account is deleted). */
+  async deleteSubmissionsForMember(memberId: string, memberEmail?: string): Promise<void> {
+    await this.ensureReady();
+    const sub =
+      this.getMemberSubmission(memberId, memberEmail) ||
+      Array.from(this.submissions.values()).find((s) => s.memberId === memberId);
+    if (!sub) {
+      await deletePersistedKycSubmission(memberId);
+      this.memberKycStatus.delete(memberId);
+      return;
+    }
+    for (const doc of sub.documents || []) {
+      this.documentsIndex.delete(doc.id);
+    }
+    this.submissions.delete(sub.id);
+    this.memberSubmissionIndex.delete(sub.memberId);
+    this.emailSubmissionIndex.delete(sub.memberEmail.toLowerCase());
+    this.memberKycStatus.delete(sub.memberId);
+    await deletePersistedKycSubmission(sub.memberId);
   }
 
   /**

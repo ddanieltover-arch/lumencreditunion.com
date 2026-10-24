@@ -157,12 +157,21 @@ model MemberProfile {
   country     Country       @relation(fields: [countryCode], references: [code])
   status      MemberStatus  @default(PENDING_VERIFICATION)
   phone       String?
+  /// Country banking scheme (US_ABA, IBAN, GB_SORT, …)
+  bankScheme               String?
+  /// Scheme-specific deposit coordinates (JSON)
+  bankDetails              Json?
+  /// Compact uppercase identity for unique lookup
+  accountNumberNormalized  String?  @unique
+  /// Grouped display string for UI
+  accountNumberDisplay     String?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
   accounts       Account[]
   kycSubmissions KycSubmission[]
 
+  @@index([accountNumberNormalized])
   @@map("member_profiles")
 }
 

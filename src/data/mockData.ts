@@ -1,6 +1,8 @@
 import { SEEDED_COUNTRIES } from '@lumenfield/db';
+import { resolveHomeCurrency } from '@lumenfield/shared';
 import {
   MemberProfile,
+  MemberBankIdentity,
   Transaction,
   LoanApplication,
   LedgerPosting,
@@ -14,43 +16,52 @@ const COUNTRY_NAMES: Record<string, string> = Object.fromEntries(
   SEEDED_COUNTRIES.map((c) => [c.code, c.name]),
 );
 
-/** Marketing-only teaser for the public landing card (not a selectable account). */
-export const LANDING_TEASER_MEMBER: MemberProfile = {
-  id: 'teaser',
-  name: 'Member',
-  email: '',
-  country: 'United States',
-  countryCode: 'US',
-  avatarInitials: 'LF',
-  identityVerified: true,
-  memberSince: '',
-  wallets: { USD: 12450.0, CAD: 0, GBP: 0, EUR: 0 },
-  virtualCard: {
-    id: 'teaser-card',
-    cardNumber: '•••• •••• •••• 4821',
-    fullNumber: '',
-    cardholderName: 'LUMENFIELD MEMBER',
-    expiryDate: '09/29',
-    cvv: '•••',
-    status: 'active',
-    dailyLimit: 2500,
-    monthlyLimit: 10000,
-    spentThisMonth: 0,
-    currency: 'USD',
-    isVirtual: true,
-  },
-  documents: [],
-};
+/** Static marketing figures for the public landing preview card (not a real account). */
+export const LANDING_PREVIEW = {
+  balanceUsd: 12450.0,
+  cardNumber: '•••• •••• •••• 4821',
+  cardholderName: 'LUMENFIELD MEMBER',
+  expiryDate: '09/29',
+} as const;
+
+export function bankIdentityFromAuthUser(user: {
+  bankScheme?: string | null;
+  bankDetails?: MemberBankIdentity['details'] | null;
+  accountNumberNormalized?: string | null;
+  accountNumberDisplay?: string | null;
+}): MemberBankIdentity | null {
+  if (
+    !user.bankScheme ||
+    !user.bankDetails ||
+    !user.accountNumberNormalized ||
+    !user.accountNumberDisplay
+  ) {
+    return null;
+  }
+  return {
+    scheme: user.bankScheme as MemberBankIdentity['scheme'],
+    details: user.bankDetails,
+    accountNumberNormalized: user.accountNumberNormalized,
+    accountNumberDisplay: user.accountNumberDisplay,
+  };
+}
 
 export function createMemberFromAuthUser(user: {
   id: string;
   email: string;
   fullName: string;
   countryCode: string;
+  bankScheme?: string | null;
+  bankDetails?: MemberBankIdentity['details'] | null;
+  accountNumberNormalized?: string | null;
+  accountNumberDisplay?: string | null;
 }): MemberProfile {
   const parts = user.fullName.trim().split(/\s+/).filter(Boolean);
   const initials = (parts.map((p) => p[0]).join('') || 'LF').slice(0, 2).toUpperCase();
   const memberSince = new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const bankIdentity = bankIdentityFromAuthUser(user);
+  const seedCountry = SEEDED_COUNTRIES.find((c) => c.code === user.countryCode);
+  const homeCurrency = resolveHomeCurrency(user.countryCode, seedCountry?.currency) as Currency;
   return {
     id: user.id,
     name: user.fullName,
@@ -72,10 +83,11 @@ export function createMemberFromAuthUser(user: {
       dailyLimit: 2500,
       monthlyLimit: 10000,
       spentThisMonth: 0,
-      currency: 'USD' as Currency,
+      currency: homeCurrency,
       isVirtual: true,
     },
     documents: [],
+    bankIdentity,
   };
 }
 

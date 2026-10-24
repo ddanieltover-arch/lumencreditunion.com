@@ -38,8 +38,8 @@ import {
   INITIAL_RECENT_FUNDING,
   INITIAL_AUDIT_LOG,
   COUNTRIES,
-  LANDING_TEASER_MEMBER,
   createMemberFromAuthUser,
+  bankIdentityFromAuthUser,
 } from '../data/mockData';
 
 interface ToastInfo {
@@ -57,8 +57,14 @@ interface AppContextType {
   setAdminTab: (tab: AdminTab) => void;
 
   members: MemberProfile[];
-  activeMember: MemberProfile;
+  activeMember: MemberProfile | null;
   setActiveMemberId: (id: string) => void;
+  /** Reload registered MEMBER profiles for the admin directory (excludes SUPER_ADMIN). */
+  fetchAdminMembers: () => Promise<void>;
+  /** Reload durable double-entry ledger postings for the admin portal. */
+  fetchAdminLedger: (tokenOverride?: string | null) => Promise<void>;
+  /** Reload signed-in member wallet balances + transaction history. */
+  fetchMemberWalletActivity: (tokenOverride?: string | null) => Promise<void>;
 
   transactions: Transaction[];
   loanApplications: LoanApplication[];
@@ -98,6 +104,8 @@ interface AppContextType {
   cardTransactions: CardTransactionRecord[];
   oneTimeCredentials: CardOneTimeSensitiveDetails | null;
   setOneTimeCredentials: (creds: CardOneTimeSensitiveDetails | null) => void;
+  /** Session-only PAN/CVV keyed by card id (never persisted server-side). */
+  cardSessionSecrets: Record<string, CardOneTimeSensitiveDetails>;
   isCreateCardModalOpen: boolean;
   openCreateCardModal: () => void;
   closeCreateCardModal: () => void;
@@ -134,7 +142,7 @@ interface AppContextType {
     purpose: string;
     assetDetails?: string;
     downPayment?: number;
-  }) => void;
+  }) => Promise<void>;
 
   updateLoanStatus: (
     loanId: string,
@@ -152,7 +160,10 @@ interface AppContextType {
   isKycModalOpen: boolean;
   openKycModal: () => void;
   closeKycModal: () => void;
-  fetchKycStatus: () => Promise<void>;
+  fetchKycStatus: (
+    accessToken?: string | null,
+    user?: { id: string; email: string } | null,
+  ) => Promise<void>;
   submitKycVerification: (input: SubmitKycInput) => Promise<any>;
   fetchAdminKycQueue: (status?: KycSubmissionStatus) => Promise<void>;
   reviewKycSubmission: (
@@ -160,6 +171,30 @@ interface AppContextType {
     decision: 'APPROVE' | 'REJECT' | 'REQUEST_MORE_INFO',
     reason?: string
   ) => Promise<any>;
+  updateAdminMember: (
+    memberId: string,
+    patch: {
+      fullName?: string;
+      email?: string;
+      phone?: string | null;
+      countryCode?: string;
+      emailVerified?: boolean;
+    },
+  ) => Promise<any>;
+  deleteAdminMember: (memberId: string) => Promise<void>;
+  updateAdminKyc: (
+    submissionId: string,
+    patch: {
+      memberName?: string;
+      memberEmail?: string;
+      countryCode?: string;
+      documentType?: string;
+      status?: KycSubmissionStatus;
+      reviewerNote?: string | null;
+      rejectionReason?: string | null;
+    },
+  ) => Promise<any>;
+  deleteAdminKyc: (submissionId: string) => Promise<void>;
   getAdminDocumentSignedUrl: (
     docId: string,
     expiresIn?: number
@@ -207,48 +242,147 @@ interface AppContextType {
   exportPersonalData: () => Promise<void>;
   requestAccountDeletion: (reason?: string) => Promise<{ success: boolean; error?: string }>;
   adminDashboardStats: any;
-  fetchAdminDashboardStats: () => Promise<void>;
+  fetchAdminDashboardStats: (tokenOverride?: string | null) => Promise<void>;
 
   resetDemoData: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
-function viewFromPath(pathname: string): AppView {
-  if (pathname === '/admin' || pathname === '/admin/') return 'admin';
-  if (pathname === '/member' || pathname === '/member/') return 'member';
-  if (pathname === '/contact' || pathname === '/contact/') return 'contact';
-  return 'landing';
+const MEMBER_TAB_SLUGS: Record<MemberTab, string> = {
+  overview: 'overview',
+  wallet: 'wallet',
+  transfers: 'transfers',
+  funding: 'funding',
+  loans: 'loans',
+  cards: 'cards',
+  documents: 'documents',
+  settings: 'settings',
+};
+
+const ADMIN_TAB_SLUGS: Record<AdminTab, string> = {
+  members: 'members',
+  identity_reviews: 'identity-reviews',
+  fund_wallet: 'fund-wallets',
+  loan_applications: 'loan-applications',
+  virtual_cards: 'virtual-cards',
+  ledger: 'ledger',
+  audit_log: 'audit-log',
+  country_settings: 'country-settings',
+};
+
+const MEMBER_SLUG_TO_TAB: Record<string, MemberTab> = Object.fromEntries(
+  Object.entries(MEMBER_TAB_SLUGS).map(([tab, slug]) => [slug, tab as MemberTab]),
+) as Record<string, MemberTab>;
+
+const ADMIN_SLUG_TO_TAB: Record<string, AdminTab> = Object.fromEntries(
+  Object.entries(ADMIN_TAB_SLUGS).map(([tab, slug]) => [slug, tab as AdminTab]),
+) as Record<string, AdminTab>;
+
+function parseLocation(pathname: string): {
+  view: AppView;
+  memberTab: MemberTab;
+  adminTab: AdminTab;
+} {
+  const parts = pathname.replace(/\/+$/, '').split('/').filter(Boolean);
+  const root = parts[0] || '';
+  const slug = parts[1] || '';
+
+  if (root === 'admin') {
+    return {
+      view: 'admin',
+      memberTab: 'overview',
+      adminTab: (slug && ADMIN_SLUG_TO_TAB[slug]) || 'members',
+    };
+  }
+  if (root === 'member') {
+    return {
+      view: 'member',
+      memberTab: (slug && MEMBER_SLUG_TO_TAB[slug]) || 'overview',
+      adminTab: 'members',
+    };
+  }
+  if (root === 'contact') {
+    return { view: 'contact', memberTab: 'overview', adminTab: 'members' };
+  }
+  return { view: 'landing', memberTab: 'overview', adminTab: 'members' };
 }
 
-function pathFromView(view: AppView): string {
-  if (view === 'admin') return '/admin';
-  if (view === 'member') return '/member';
+function pathFor(view: AppView, memberTab: MemberTab, adminTab: AdminTab): string {
+  if (view === 'admin') return `/admin/${ADMIN_TAB_SLUGS[adminTab]}`;
+  if (view === 'member') return `/member/${MEMBER_TAB_SLUGS[memberTab]}`;
   if (view === 'contact') return '/contact';
   return '/';
 }
 
+function replacePath(next: string) {
+  if (typeof window === 'undefined') return;
+  if (window.location.pathname !== next) {
+    window.history.pushState({}, '', next);
+  }
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentView, setCurrentViewState] = useState<AppView>(() =>
-    typeof window !== 'undefined' ? viewFromPath(window.location.pathname) : 'landing',
+  const initial =
+    typeof window !== 'undefined'
+      ? parseLocation(window.location.pathname)
+      : { view: 'landing' as AppView, memberTab: 'overview' as MemberTab, adminTab: 'members' as AdminTab };
+
+  const [currentView, setCurrentViewState] = useState<AppView>(initial.view);
+  const [memberTab, setMemberTabState] = useState<MemberTab>(initial.memberTab);
+  const [adminTab, setAdminTabState] = useState<AdminTab>(initial.adminTab);
+
+  const setCurrentView = useCallback(
+    (view: AppView) => {
+      setCurrentViewState(view);
+      // Default landing tabs when entering a section from elsewhere
+      if (view === 'member') {
+        setMemberTabState((mt) => {
+          replacePath(pathFor('member', mt, 'members'));
+          return mt;
+        });
+      } else if (view === 'admin') {
+        setAdminTabState((at) => {
+          replacePath(pathFor('admin', 'overview', at));
+          return at;
+        });
+      } else {
+        replacePath(pathFor(view, 'overview', 'members'));
+      }
+    },
+    [],
   );
-  const setCurrentView = useCallback((view: AppView) => {
-    setCurrentViewState(view);
-    if (typeof window === 'undefined') return;
-    const next = pathFromView(view);
-    if (window.location.pathname !== next) {
-      window.history.pushState({}, '', next);
-    }
+
+  const setMemberTab = useCallback((tab: MemberTab) => {
+    setMemberTabState(tab);
+    setCurrentViewState('member');
+    replacePath(pathFor('member', tab, 'members'));
+  }, []);
+
+  const setAdminTab = useCallback((tab: AdminTab) => {
+    setAdminTabState(tab);
+    setCurrentViewState('admin');
+    replacePath(pathFor('admin', 'overview', tab));
   }, []);
 
   useEffect(() => {
-    const onPopState = () => setCurrentViewState(viewFromPath(window.location.pathname));
+    const onPopState = () => {
+      const loc = parseLocation(window.location.pathname);
+      setCurrentViewState(loc.view);
+      setMemberTabState(loc.memberTab);
+      setAdminTabState(loc.adminTab);
+    };
     window.addEventListener('popstate', onPopState);
+    // Normalize bare /member or /admin to default tab slug
+    if (typeof window !== 'undefined') {
+      const path = window.location.pathname.replace(/\/+$/, '') || '/';
+      if (path === '/member' || path === '/admin') {
+        const loc = parseLocation(path);
+        replacePath(pathFor(loc.view, loc.memberTab, loc.adminTab));
+      }
+    }
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
-
-  const [memberTab, setMemberTab] = useState<MemberTab>('overview');
-  const [adminTab, setAdminTab] = useState<AdminTab>('members');
 
   const [members, setMembers] = useState<MemberProfile[]>(INITIAL_MEMBERS);
   const [activeMemberId, setActiveMemberId] = useState<string>('');
@@ -263,14 +397,223 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     email: string;
     fullName: string;
     countryCode: string;
+    role?: string;
+    bankScheme?: string | null;
+    bankDetails?: any;
+    accountNumberNormalized?: string | null;
+    accountNumberDisplay?: string | null;
   }) => {
+    // Super admins are operators — never appear in the registered members directory
+    if (user.role === 'SUPER_ADMIN') {
+      setMembers((prev) =>
+        prev.filter(
+          (m) =>
+            m.id !== user.id &&
+            m.id !== '00000000-0000-0000-0000-000000000001' &&
+            m.email.toLowerCase() !== user.email.toLowerCase(),
+        ),
+      );
+      return;
+    }
+    const bankIdentity = bankIdentityFromAuthUser(user);
     setMembers((prev) => {
-      if (prev.some((m) => m.id === user.id || m.email.toLowerCase() === user.email.toLowerCase())) {
-        return prev;
+      const cleaned = prev.filter(
+        (m) => m.id !== '00000000-0000-0000-0000-000000000001',
+      );
+      const existingIdx = cleaned.findIndex(
+        (m) => m.id === user.id || m.email.toLowerCase() === user.email.toLowerCase(),
+      );
+      if (existingIdx >= 0) {
+        if (!bankIdentity) return cleaned;
+        const next = [...cleaned];
+        next[existingIdx] = { ...next[existingIdx]!, bankIdentity };
+        return next;
       }
-      return [...prev, createMemberFromAuthUser(user)];
+      return [...cleaned, createMemberFromAuthUser(user)];
     });
     setActiveMemberId(user.id);
+  };
+
+  const mapRemoteMembers = (remote: any[]): MemberProfile[] =>
+    (Array.isArray(remote) ? remote : []).map((u) => {
+      const profile = createMemberFromAuthUser({
+        id: u.id,
+        email: u.email,
+        fullName: u.fullName,
+        countryCode: u.countryCode,
+        bankScheme: u.bankScheme,
+        bankDetails: u.bankDetails,
+        accountNumberNormalized: u.accountNumberNormalized,
+        accountNumberDisplay: u.accountNumberDisplay,
+      });
+      return {
+        ...profile,
+        identityVerified: Boolean(u.identityVerified),
+        emailVerified: Boolean(u.emailVerified),
+        memberSince: u.createdAt
+          ? new Date(u.createdAt).toLocaleString('en-US', { month: 'long', year: 'numeric' })
+          : profile.memberSince,
+        wallets: {
+          USD: Number(u.wallets?.USD ?? 0),
+          CAD: Number(u.wallets?.CAD ?? 0),
+          GBP: Number(u.wallets?.GBP ?? 0),
+          EUR: Number(u.wallets?.EUR ?? 0),
+        },
+      };
+    });
+
+  const mapRemoteLoans = (remote: any[]): LoanApplication[] =>
+    (Array.isArray(remote) ? remote : []).map((l) => {
+      const type = l.type === 'mortgage' ? 'mortgage' : 'auto';
+      const amount = Number(l.requestedAmount || 0);
+      const termMonths = Number(l.termMonths || 60);
+      const apr = type === 'auto' ? 5.4 : 6.2;
+      const monthlyRate = apr / 100 / 12;
+      const estimatedMonthlyPayment =
+        amount > 0 && termMonths > 0
+          ? Number(
+              (
+                (amount * (monthlyRate * Math.pow(1 + monthlyRate, termMonths))) /
+                (Math.pow(1 + monthlyRate, termMonths) - 1)
+              ).toFixed(2),
+            )
+          : 0;
+      const status = (l.status || 'under_review') as LoanApplication['status'];
+      return {
+        id: l.id,
+        memberId: l.memberId,
+        memberName: l.memberName || 'Member',
+        memberEmail: l.memberEmail,
+        type,
+        title: type === 'auto' ? 'Auto loan application' : 'Mortgage loan application',
+        requestedAmount: amount,
+        termMonths,
+        interestRateApr: apr,
+        estimatedMonthlyPayment,
+        status,
+        currentStage:
+          status === 'approved' || status === 'rejected' ? 'Decision' : 'Review',
+        submittedDate: l.createdAt
+          ? new Date(l.createdAt).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+            })
+          : '',
+        currency: (l.currency || 'USD') as Currency,
+        purpose: l.purpose || '',
+        assetDetails: l.assetDetails,
+        downPayment: l.downPayment,
+      };
+    });
+
+  const ledgerAccountLabel = (entry: any): string => {
+    if (!entry) return '—';
+    const type = String(entry.accountType || '');
+    const currency = String(entry.currency || 'USD');
+    if (type === 'SANDBOX_FUNDING_POOL') return 'Funding pool';
+    if (type === 'MEMBER_WALLET') return `Member wallet (${currency})`;
+    if (type === 'EXTERNAL_CLEARING') return `External clearing (${currency})`;
+    if (type === 'FEE') return `Platform fee (${currency})`;
+    if (type === 'LOAN_RECEIVABLE') return `Loan receivable (${currency})`;
+    if (type === 'ASSET') return `Asset (${currency})`;
+    return entry.accountId || type || 'Account';
+  };
+
+  const mapRemoteLedgerTransactions = (
+    remote: any[],
+    nameById?: Map<string, string>,
+  ): LedgerPosting[] =>
+    (Array.isArray(remote) ? remote : [])
+      .map((tx) => {
+        const entries = Array.isArray(tx.entries) ? tx.entries : [];
+        const debit = entries.find((e: any) => e.direction === 'DEBIT');
+        const credit = entries.find((e: any) => e.direction === 'CREDIT');
+        const amountMinor = Number(debit?.amountMinor ?? credit?.amountMinor ?? 0);
+        const created = tx.createdAt ? new Date(tx.createdAt) : new Date();
+        const memberId = String(tx.metadata?.memberId || '');
+        const memberName =
+          (memberId && nameById?.get(memberId)) ||
+          members.find((m) => m.id === memberId)?.name ||
+          (memberId ? `Member ${memberId.slice(0, 8)}` : 'System');
+        return {
+          id: String(tx.id || `ledg-${tx.reference || Date.now()}`),
+          reference: String(tx.reference || tx.id || '—'),
+          date: created.toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          timestamp: created.toISOString(),
+          description: String(tx.description || 'Ledger posting'),
+          currency: (tx.currency || 'USD') as Currency,
+          debitAccount: ledgerAccountLabel(debit),
+          debitAmount: amountMinor / 100,
+          creditAccount: ledgerAccountLabel(credit),
+          creditAmount: amountMinor / 100,
+          memberId,
+          memberName,
+          adminActor: String(tx.createdById || 'System'),
+        } satisfies LedgerPosting;
+      })
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  const mapSourceToTxType = (
+    source: string,
+    direction: 'DEBIT' | 'CREDIT',
+  ): Transaction['type'] => {
+    const src = (source || '').toUpperCase();
+    if (src === 'TEST' || src === 'DEPOSIT' || src === 'BANK') return 'admin_credit';
+    if (src.includes('LOAN')) return 'loan_disbursement';
+    if (src.includes('SWAP') || src.includes('FX')) return 'currency_swap';
+    if (src.includes('CARD')) return 'card_purchase';
+    if (src.includes('BANK')) return 'bank_transfer';
+    return direction === 'CREDIT' ? 'transfer_in' : 'transfer_out';
+  };
+
+  const mapRemoteWalletTransactions = (remote: any[]): Transaction[] =>
+    (Array.isArray(remote) ? remote : [])
+      .map((row) => {
+        const direction = row.direction === 'DEBIT' ? 'DEBIT' : 'CREDIT';
+        const amountMajor = Number(row.amountMinor || 0) / 100;
+        const created = row.createdAt ? new Date(row.createdAt) : new Date();
+        const statusRaw = String(row.status || 'POSTED').toUpperCase();
+        const status: Transaction['status'] =
+          statusRaw === 'POSTED'
+            ? 'Completed'
+            : statusRaw === 'PENDING_APPROVAL' || statusRaw === 'PENDING'
+              ? 'Pending'
+              : 'Failed';
+        return {
+          id: String(row.id || row.transactionId || `tx-${created.getTime()}`),
+          description: String(row.description || 'Wallet movement'),
+          date: created.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          timestamp: created.toISOString(),
+          status,
+          amount: direction === 'CREDIT' ? amountMajor : -amountMajor,
+          currency: (row.currency || 'USD') as Currency,
+          type: mapSourceToTxType(String(row.source || ''), direction),
+          reference: row.reference ? String(row.reference) : undefined,
+          category: String(row.source || 'Ledger'),
+          counterparty: direction === 'CREDIT' ? 'Lumenfield Credit Union' : undefined,
+        } satisfies Transaction;
+      })
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+
+  const fetchAdminMembers = async (tokenOverride?: string | null) => {
+    try {
+      const token = tokenOverride ?? authToken;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch('/admin/member-directory', { headers });
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return;
+      const data = await res.json();
+      setMembers(mapRemoteMembers(data.members));
+    } catch (err) {
+      console.debug('Failed to fetch admin members:', err);
+    }
   };
   const [ledgerPostings, setLedgerPostings] = useState<LedgerPosting[]>(INITIAL_LEDGER_POSTINGS);
   const [recentFunding, setRecentFunding] = useState<FundingRecord[]>(INITIAL_RECENT_FUNDING);
@@ -286,14 +629,152 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openPrivacyModal = () => setIsPrivacyModalOpen(true);
   const closePrivacyModal = () => setIsPrivacyModalOpen(false);
 
-  const fetchAdminDashboardStats = async () => {
+  const fetchAdminLedger = async (tokenOverride?: string | null) => {
     try {
+      const token = tokenOverride ?? authToken;
       const headers: Record<string, string> = {};
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const res = await fetch('/admin/ledger/transactions', { headers });
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return;
+      const data = await res.json();
+      const rows = Array.isArray(data) ? data : data?.transactions || [];
+      const nameById = new Map(members.map((m) => [m.id, m.name]));
+      setLedgerPostings(mapRemoteLedgerTransactions(rows, nameById));
+    } catch (err) {
+      console.debug('Failed to fetch admin ledger:', err);
+    }
+  };
+
+  const fetchMemberWalletActivity = async (tokenOverride?: string | null) => {
+    try {
+      const token = tokenOverride ?? authToken;
+      if (!token) return;
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        'Cache-Control': 'no-cache',
+      };
+      const cacheBust = `_=${Date.now()}`;
+      const [txRes, balRes] = await Promise.all([
+        fetch(`/wallet/transactions?limit=100&page=1&${cacheBust}`, { headers, cache: 'no-store' }),
+        fetch(`/wallet/balances?${cacheBust}`, { headers, cache: 'no-store' }),
+      ]);
+
+      if (txRes.ok) {
+        const contentType = txRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const payload = await txRes.json();
+          const rows = Array.isArray(payload?.data)
+            ? payload.data
+            : Array.isArray(payload)
+              ? payload
+              : [];
+          setTransactions(mapRemoteWalletTransactions(rows));
+        }
+      }
+
+      if (balRes.ok) {
+        const contentType = balRes.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const balances = await balRes.json();
+          const walletPatch: Partial<Record<Currency, number>> = {
+            USD: 0,
+            CAD: 0,
+            GBP: 0,
+            EUR: 0,
+          };
+          const list = Array.isArray(balances)
+            ? balances
+            : Array.isArray(balances?.balances)
+              ? balances.balances
+              : [];
+          for (const row of list) {
+            const currency = String(row.currency || '').toUpperCase() as Currency;
+            if (!['USD', 'CAD', 'GBP', 'EUR'].includes(currency)) continue;
+            const major =
+              typeof row.balanceMinor === 'number'
+                ? row.balanceMinor / 100
+                : Number(String(row.balanceFormatted || '').replace(/[^0-9.-]/g, '') || 0);
+            walletPatch[currency] = major;
+          }
+
+          setMembers((prev) => {
+            const matchIdx = prev.findIndex(
+              (m) =>
+                m.id === activeMemberId ||
+                (currentUser &&
+                  (m.id === currentUser.id ||
+                    m.email.toLowerCase() === currentUser.email.toLowerCase())),
+            );
+            if (matchIdx >= 0) {
+              const next = [...prev];
+              const current = next[matchIdx]!;
+              next[matchIdx] = {
+                ...current,
+                wallets: {
+                  ...current.wallets,
+                  ...walletPatch,
+                },
+              };
+              return next;
+            }
+            if (currentUser && currentUser.role !== 'SUPER_ADMIN') {
+              const profile = createMemberFromAuthUser(currentUser);
+              return [
+                ...prev,
+                {
+                  ...profile,
+                  wallets: {
+                    ...profile.wallets,
+                    ...walletPatch,
+                  },
+                },
+              ];
+            }
+            return prev;
+          });
+
+          if (currentUser?.id && !activeMemberId) {
+            setActiveMemberId(currentUser.id);
+          }
+        }
+      }
+    } catch (err) {
+      console.debug('Failed to fetch member wallet activity:', err);
+    }
+  };
+
+  const fetchAdminDashboardStats = async (tokenOverride?: string | null) => {
+    try {
+      const token = tokenOverride ?? authToken;
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch('/admin/dashboard-stats', { headers });
-      if (res.ok) {
-        const stats = await res.json();
-        setAdminDashboardStats(stats);
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return;
+      const stats = await res.json();
+      setAdminDashboardStats(stats);
+      // Prefer members/loans embedded in stats so every admin tile matches durable data
+      let nameById = new Map<string, string>();
+      if (Array.isArray(stats.members)) {
+        const mapped = mapRemoteMembers(stats.members);
+        setMembers(mapped);
+        nameById = new Map(mapped.map((m) => [m.id, m.name]));
+      } else {
+        await fetchAdminMembers(token);
+      }
+      if (Array.isArray(stats.loans)) {
+        setLoanApplications(mapRemoteLoans(stats.loans));
+      }
+      if (Array.isArray(stats.kycSubmissions)) {
+        setAdminKycQueue(stats.kycSubmissions);
+      }
+      if (Array.isArray(stats.ledgerTransactions)) {
+        setLedgerPostings(mapRemoteLedgerTransactions(stats.ledgerTransactions, nameById));
+      } else {
+        await fetchAdminLedger(token);
       }
     } catch (err) {
       console.debug('Failed to fetch admin dashboard stats:', err);
@@ -387,11 +868,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const openKycModal = () => setIsKycModalOpen(true);
   const closeKycModal = () => setIsKycModalOpen(false);
 
+  const CARD_SECRETS_STORAGE_KEY = 'lumenfield_card_session_secrets';
+
+  const readCardSessionSecrets = (): Record<string, CardOneTimeSensitiveDetails> => {
+    try {
+      const raw = sessionStorage.getItem(CARD_SECRETS_STORAGE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  };
+
+  const writeCardSessionSecrets = (next: Record<string, CardOneTimeSensitiveDetails>) => {
+    try {
+      sessionStorage.setItem(CARD_SECRETS_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore quota / private mode */
+    }
+  };
+
   // Virtual Card State & Modals
   const [virtualCards, setVirtualCards] = useState<VirtualCardRecord[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [cardTransactions, setCardTransactions] = useState<CardTransactionRecord[]>([]);
   const [oneTimeCredentials, setOneTimeCredentials] = useState<CardOneTimeSensitiveDetails | null>(null);
+  const [cardSessionSecrets, setCardSessionSecrets] = useState<
+    Record<string, CardOneTimeSensitiveDetails>
+  >(() => readCardSessionSecrets());
   const [isCreateCardModalOpen, setIsCreateCardModalOpen] = useState(false);
   const [isCardLimitsModalOpen, setIsCardLimitsModalOpen] = useState(false);
   const [isSimulatePurchaseModalOpen, setIsSimulatePurchaseModalOpen] = useState(false);
@@ -443,12 +948,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               setCurrentUser(meData.user);
               if (meData.user) {
                 ensureMemberForUser(meData.user);
+                if (meData.user.role !== 'SUPER_ADMIN') {
+                  await fetchKycStatus(data.accessToken, meData.user);
+                }
               }
               if (meData.user?.role === 'SUPER_ADMIN') {
                 setAdminTab('members');
                 setCurrentView('admin');
+                await fetchAdminDashboardStats(data.accessToken);
               } else {
                 setCurrentView('member');
+                await fetchMemberWalletActivity(data.accessToken);
               }
               return;
             }
@@ -509,8 +1019,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (data.user.role === 'SUPER_ADMIN') {
       setAdminTab('members');
       setCurrentView('admin');
+      await fetchAdminDashboardStats(data.accessToken);
     } else {
       setCurrentView('member');
+      await fetchKycStatus(data.accessToken, data.user);
+      await fetchMemberWalletActivity(data.accessToken);
     }
     return data;
   };
@@ -533,8 +1046,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (data.user.role === 'SUPER_ADMIN') {
       setAdminTab('members');
       setCurrentView('admin');
+      await fetchAdminDashboardStats(data.accessToken);
     } else {
       setCurrentView('member');
+      await fetchKycStatus(data.accessToken, data.user);
+      await fetchMemberWalletActivity(data.accessToken);
     }
     return data;
   };
@@ -607,7 +1123,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAuthToken(null);
     setRefreshToken(null);
     localStorage.removeItem('lumenfield_refresh_token');
+    try {
+      sessionStorage.removeItem(CARD_SECRETS_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+    setCardSessionSecrets({});
+    setOneTimeCredentials(null);
     setCurrentUser(null);
+    setActiveMemberId('');
+    setKycStatus('NOT_SUBMITTED');
+    setKycSubmission(null);
+    setKycNotifications([]);
     if (redirectToLanding) {
       setCurrentView('landing');
     }
@@ -618,10 +1145,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const [toasts, setToasts] = useState<ToastInfo[]>([]);
 
+  // Only a real signed-in member profile — never a marketing teaser / guest stub
   const activeMember =
-    members.find((m) => m.id === activeMemberId) ||
-    members[0] ||
-    LANDING_TEASER_MEMBER;
+    (activeMemberId && members.find((m) => m.id === activeMemberId)) ||
+    (currentUser?.role === 'MEMBER'
+      ? members.find((m) => m.id === currentUser.id) || null
+      : null);
 
   const showToast = (message: string, type: 'success' | 'info' | 'warning' = 'success') => {
     const id = 'toast-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
@@ -700,10 +1229,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
-    // Call server API route with Bearer token
+    // Call server API route with Bearer token — durable source of truth for ledger
     if (authToken) {
       const idempotencyKey = `idemp-fund-${targetMember.id}-${Date.now()}`;
-      fetch('/admin/funding', {
+      void fetch('/admin/funding', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -718,7 +1247,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reason: reason || 'Member wallet credit.',
           idempotencyKey,
         }),
-      }).catch((e) => console.error('Server funding sync:', e));
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            console.error('Server funding sync failed:', errBody);
+            return;
+          }
+          await fetchAdminDashboardStats(authToken);
+        })
+        .catch((e) => console.error('Server funding sync:', e));
     }
 
     // 1. Update Member Wallet Balance
@@ -816,6 +1354,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     amount: number;
     currency: Currency;
   }) => {
+    if (!activeMember) {
+      return { success: false, message: 'Please sign in to send money.' };
+    }
     if (!recipient.trim()) {
       return { success: false, message: 'Please specify a recipient name or Lumenfield ID.' };
     }
@@ -914,6 +1455,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Download Member Statement (CSV and PDF)
   const downloadStatement = async (format: 'csv' | 'pdf', currency?: string) => {
+    if (!activeMember) {
+      showToast('Please sign in to download a statement.', 'warning');
+      return;
+    }
     try {
       if (authToken) {
         const queryParams = new URLSearchParams({ format });
@@ -1109,6 +1654,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     setOneTimeCredentials(data.oneTimeCredentials);
+    if (data.card?.id && data.oneTimeCredentials) {
+      setCardSessionSecrets((prev) => {
+        const next = { ...prev, [data.card.id]: data.oneTimeCredentials };
+        writeCardSessionSecrets(next);
+        return next;
+      });
+    }
     await fetchCards();
     setActiveCardId(data.card.id);
     showToast(`Virtual card for ${params.currency} wallet created successfully!`, 'success');
@@ -1133,20 +1685,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       await fetchCards();
       const newStatus = data.card.status === 'ACTIVE' ? 'active' : 'frozen';
-      setMembers((prev) =>
-        prev.map((m) => {
-          if (m.id === activeMember.id) {
-            return {
-              ...m,
-              virtualCard: {
-                ...m.virtualCard,
-                status: newStatus,
-              },
-            };
-          }
-          return m;
-        })
-      );
+      if (activeMember) {
+        setMembers((prev) =>
+          prev.map((m) => {
+            if (m.id === activeMember.id) {
+              return {
+                ...m,
+                virtualCard: {
+                  ...m.virtualCard,
+                  status: newStatus,
+                },
+              };
+            }
+            return m;
+          })
+        );
+      }
 
       showToast(
         data.card.status === 'FROZEN'
@@ -1194,21 +1748,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       await fetchCards();
-      setMembers((prev) =>
-        prev.map((m) => {
-          if (m.id === activeMember.id) {
-            return {
-              ...m,
-              virtualCard: {
-                ...m.virtualCard,
-                dailyLimit: Math.round(dailyLimitMinor / 100),
-                monthlyLimit: Math.round(monthlyLimitMinor / 100),
-              },
-            };
-          }
-          return m;
-        })
-      );
+      if (activeMember) {
+        setMembers((prev) =>
+          prev.map((m) => {
+            if (m.id === activeMember.id) {
+              return {
+                ...m,
+                virtualCard: {
+                  ...m.virtualCard,
+                  dailyLimit: Math.round(dailyLimitMinor / 100),
+                  monthlyLimit: Math.round(monthlyLimitMinor / 100),
+                },
+              };
+            }
+            return m;
+          })
+        );
+      }
 
       showToast('Virtual card spending limits updated.', 'success');
       return data.card;
@@ -1242,7 +1798,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       throw new Error(data.message || 'Transaction declined.');
     }
 
-    if (data.transaction) {
+    if (data.transaction && activeMember) {
       const cur = data.transaction.currency as Currency;
       const majorAmt = data.transaction.amountMinor / 100;
       setMembers((prev) =>
@@ -1281,8 +1837,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [activeCardId]);
 
-  // Submit loan application
-  const submitLoanApplication = ({
+  // Submit loan application (persisted server-side so admin dashboard sees it)
+  const submitLoanApplication = async ({
     type,
     amount,
     termMonths,
@@ -1297,16 +1853,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     assetDetails?: string;
     downPayment?: number;
   }) => {
+    if (!activeMember) {
+      showToast('Please sign in to apply for a loan.', 'warning');
+      return;
+    }
     const apr = type === 'auto' ? 5.4 : 6.2;
     const monthlyRate = apr / 100 / 12;
     const monthlyPayment =
       (amount * (monthlyRate * Math.pow(1 + monthlyRate, termMonths))) /
       (Math.pow(1 + monthlyRate, termMonths) - 1);
 
-    const newApp: LoanApplication = {
-      id: `loan-${type}-${Date.now().toString().slice(-4)}`,
+    const optimistic: LoanApplication = {
+      id: `loan-${type}-pending`,
       memberId: activeMember.id,
       memberName: activeMember.name,
+      memberEmail: activeMember.email,
       type,
       title: type === 'auto' ? 'Auto loan application' : 'Mortgage loan application',
       requestedAmount: amount,
@@ -1315,43 +1876,71 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       estimatedMonthlyPayment: Number(monthlyPayment.toFixed(2)),
       status: 'under_review',
       currentStage: 'Review',
-      submittedDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+      submittedDate: new Date().toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
       currency: 'USD',
       purpose,
-      assetDetails: assetDetails || (type === 'auto' ? 'Vehicle under evaluation' : 'Real estate parcel evaluation'),
+      assetDetails:
+        assetDetails ||
+        (type === 'auto' ? 'Vehicle under evaluation' : 'Real estate parcel evaluation'),
       downPayment,
     };
 
-    setLoanApplications((prev) => [newApp, ...prev]);
+    setLoanApplications((prev) => [optimistic, ...prev.filter((l) => l.id !== optimistic.id)]);
 
-    if (authToken) {
-      fetch('/loans/apply', {
+    if (!authToken) {
+      showToast('Sign in again to submit a loan application.', 'warning');
+      return;
+    }
+
+    try {
+      const res = await fetch('/loans/apply', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${authToken}`,
+          'X-Requested-With': 'XMLHttpRequest',
         },
         body: JSON.stringify({
           type,
           amount,
           termMonths,
           purpose,
-          assetDetails,
+          assetDetails: optimistic.assetDetails,
           downPayment,
         }),
-      }).catch((e) => console.error('Loan apply sync:', e));
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!res.ok) {
+        throw new Error(data.message || 'Could not submit loan application.');
+      }
+      const saved = data.loan
+        ? mapRemoteLoans([data.loan])[0]
+        : { ...optimistic, id: data.loan?.id || optimistic.id };
+      setLoanApplications((prev) => [
+        saved!,
+        ...prev.filter((l) => l.id !== optimistic.id && l.id !== saved!.id),
+      ]);
+      logAudit(
+        'LOAN_APPLICATION_SUBMITTED',
+        `${type.toUpperCase()} Loan ($${amount.toLocaleString()})`,
+        saved!.id,
+        `Requested $${amount.toLocaleString()} over ${termMonths} months for ${purpose}.`,
+        activeMember.email,
+        'Member',
+      );
+      showToast(
+        `Your ${type} loan application for $${amount.toLocaleString()} has been submitted for review!`,
+        'success',
+      );
+    } catch (err: any) {
+      setLoanApplications((prev) => prev.filter((l) => l.id !== optimistic.id));
+      showToast(err.message || 'Loan application failed.', 'warning');
     }
-
-    logAudit(
-      'LOAN_APPLICATION_SUBMITTED',
-      `${type.toUpperCase()} Loan ($${amount.toLocaleString()})`,
-      newApp.id,
-      `Requested $${amount.toLocaleString()} over ${termMonths} months for ${purpose}.`,
-      activeMember.email,
-      'Member'
-    );
-
-    showToast(`Your ${type} loan application for $${amount.toLocaleString()} has been submitted for review!`, 'success');
   };
 
   const updateLoanStatus = (
@@ -1440,24 +2029,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ).catch(() => {});
 
       if (authToken && app) {
-        fetch(`/admin/loans/${loanId}/decision`, {
+        void fetch(`/admin/loans/${loanId}/decision`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${authToken}`,
+            'X-Requested-With': 'XMLHttpRequest',
           },
           body: JSON.stringify({
             decision: status === 'approved' ? 'APPROVE' : 'REJECT',
             memberId: app.memberId,
             memberName: app.memberName,
-            memberEmail: members.find((m) => m.id === app.memberId)?.email,
+            memberEmail:
+              app.memberEmail ||
+              members.find((m) => m.id === app.memberId)?.email,
             requestedAmount: app.requestedAmount,
             type: app.type,
             termMonths: app.termMonths,
             currency: app.currency,
             purpose: app.purpose,
           }),
-        }).catch((e) => console.error('Loan decision sync:', e));
+        })
+          .then(() => fetchAdminDashboardStats(authToken))
+          .catch((e) => console.error('Loan decision sync:', e));
       }
     }
 
@@ -1466,6 +2060,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Upload KYC
   const uploadKYC = (type: KYCDocument['type'], documentName: string, fileName: string) => {
+    if (!activeMember) {
+      showToast('Please sign in to upload documents.', 'warning');
+      return;
+    }
     const newDoc: KYCDocument = {
       id: 'doc-' + Date.now(),
       type,
@@ -1538,16 +2136,79 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return '';
   };
 
-  const fetchKycStatus = async () => {
+  const applyKycStatusToMember = (
+    userId: string,
+    userEmail: string | undefined,
+    data: {
+      status?: KycSubmissionStatus | 'NOT_SUBMITTED';
+      isApproved?: boolean;
+      submission?: KycSubmission | null;
+    },
+  ) => {
+    const status = data.status || (data.isApproved ? 'APPROVED' : 'NOT_SUBMITTED');
+    setKycStatus(status);
+    if (data.submission) {
+      setKycSubmission(data.submission);
+    } else if (status === 'NOT_SUBMITTED') {
+      setKycSubmission(null);
+    }
+
+    const verified = Boolean(data.isApproved) || status === 'APPROVED';
+    const mapDocType = (raw: string): KYCDocument['type'] => {
+      const key = raw.toUpperCase();
+      if (key === 'ID_CARD') return 'id_card';
+      if (key === 'RESIDENCE_PERMIT') return 'residence_permit';
+      if (key === 'DRIVERS_LICENSE') return 'drivers_license';
+      return 'passport';
+    };
+    const docsFromSubmission: KYCDocument[] = (data.submission?.documents || []).map((d: any) => ({
+      id: d.id,
+      type: mapDocType(String(d.type || 'PASSPORT')),
+      documentName: `${data.submission?.countryCode || ''} ${String(d.type || 'document').replace(/_/g, ' ')}`.trim(),
+      fileName: d.fileName,
+      submittedAt: new Date(d.uploadedAt || data.submission?.submittedAt || Date.now()).toLocaleDateString(
+        'en-US',
+        { month: 'short', day: 'numeric', year: 'numeric' },
+      ),
+      status:
+        status === 'APPROVED'
+          ? 'approved'
+          : status === 'REJECTED'
+          ? 'rejected'
+          : 'pending',
+      rejectionReason: data.submission?.rejectionReason || undefined,
+      reviewedBy: data.submission?.reviewedAt ? 'Super Admin' : undefined,
+    }));
+
+    setMembers((prev) =>
+      prev.map((m) => {
+        const match =
+          m.id === userId ||
+          (!!userEmail && m.email.toLowerCase() === userEmail.toLowerCase());
+        if (!match) return m;
+        return {
+          ...m,
+          identityVerified: verified,
+          documents: docsFromSubmission.length ? docsFromSubmission : m.documents,
+        };
+      }),
+    );
+  };
+
+  const fetchKycStatus = async (accessToken?: string | null, user?: { id: string; email: string } | null) => {
     try {
+      const token = accessToken ?? authToken;
+      const targetUser = user ?? currentUser;
       const headers: Record<string, string> = {};
-      if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch('/kyc/status', { headers });
       if (res.ok) {
         const data = await res.json();
-        setKycStatus(data.status);
-        if (data.submission) {
-          setKycSubmission(data.submission);
+        if (targetUser) {
+          applyKycStatusToMember(targetUser.id, targetUser.email, data);
+        } else {
+          setKycStatus(data.status || 'NOT_SUBMITTED');
+          setKycSubmission(data.submission || null);
         }
       }
       const notifRes = await fetch('/kyc/notifications', { headers });
@@ -1589,17 +2250,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'pending',
     }));
 
-    setMembers((prev) =>
-      prev.map((m) => {
-        if (m.id === activeMember.id) {
-          return {
-            ...m,
-            documents: [...newDocs, ...m.documents],
-          };
-        }
-        return m;
-      })
-    );
+    if (activeMember) {
+      setMembers((prev) =>
+        prev.map((m) => {
+          if (m.id === activeMember.id) {
+            return {
+              ...m,
+              documents: [...newDocs, ...m.documents],
+            };
+          }
+          return m;
+        })
+      );
+    }
 
     await fetchKycStatus();
     await fetchAdminKycQueue();
@@ -1623,6 +2286,127 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const readAdminJson = async (res: Response): Promise<any> => {
+    const text = await res.text();
+    if (!text) {
+      if (!res.ok) {
+        throw new Error(`Request failed (${res.status}). Please try again.`);
+      }
+      return {};
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error(
+        res.ok
+          ? 'Unexpected server response. Please refresh and try again.'
+          : `Request failed (${res.status}). Please try again.`,
+      );
+    }
+  };
+
+  const updateAdminMember = async (
+    memberId: string,
+    patch: {
+      fullName?: string;
+      email?: string;
+      phone?: string | null;
+      countryCode?: string;
+      emailVerified?: boolean;
+    },
+  ) => {
+    const token = await getAdminToken();
+    const res = await fetch(`/admin/member-directory/${memberId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify(patch),
+    });
+    const data = await readAdminJson(res);
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to update member.');
+    }
+    await fetchAdminDashboardStats(token);
+    await fetchAdminKycQueue();
+    showToast('Member profile updated.', 'success');
+    return data;
+  };
+
+  const deleteAdminMember = async (memberId: string) => {
+    const token = await getAdminToken();
+    // POST /delete is more reliable than HTTP DELETE behind some proxies
+    const res = await fetch(`/admin/member-directory/${encodeURIComponent(memberId)}/delete`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify({}),
+    });
+    const data = await readAdminJson(res);
+    if (!res.ok) {
+      throw new Error(data.message || `Failed to delete member (${res.status}).`);
+    }
+    setMembers((prev) => prev.filter((m) => m.id !== memberId));
+    await fetchAdminDashboardStats(token);
+    await fetchAdminKycQueue();
+    showToast('Member account deleted.', 'info');
+  };
+
+  const updateAdminKyc = async (
+    submissionId: string,
+    patch: {
+      memberName?: string;
+      memberEmail?: string;
+      countryCode?: string;
+      documentType?: string;
+      status?: KycSubmissionStatus;
+      reviewerNote?: string | null;
+      rejectionReason?: string | null;
+    },
+  ) => {
+    const token = await getAdminToken();
+    const res = await fetch(`/admin/kyc/submissions/${submissionId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+      body: JSON.stringify(patch),
+    });
+    const data = await readAdminJson(res);
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to update KYC submission.');
+    }
+    await fetchAdminKycQueue();
+    await fetchAdminDashboardStats(token);
+    showToast('KYC record updated.', 'success');
+    return data;
+  };
+
+  const deleteAdminKyc = async (submissionId: string) => {
+    const token = await getAdminToken();
+    const res = await fetch(`/admin/kyc/submissions/${submissionId}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+    const data = await readAdminJson(res);
+    if (!res.ok) {
+      throw new Error(data.message || 'Failed to delete KYC submission.');
+    }
+    setAdminKycQueue((prev) => prev.filter((s) => s.id !== submissionId));
+    await fetchAdminDashboardStats(token);
+    showToast('KYC submission deleted.', 'info');
+  };
+
   const reviewKycSubmission = async (
     submissionId: string,
     decision: 'APPROVE' | 'REJECT' | 'REQUEST_MORE_INFO',
@@ -1643,6 +2427,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     await fetchAdminKycQueue();
+    await fetchAdminMembers(token);
 
     // Update target member in members list
     setMembers((prev) =>
@@ -1751,6 +2536,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const convertCurrency = (from: Currency, to: Currency, amount: number) => {
+    if (!activeMember) {
+      return { success: false, message: 'Please sign in to convert currency.' };
+    }
     if (from === to) {
       return { success: false, message: 'Source and target currencies must be different.' };
     }
@@ -1855,6 +2643,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         members,
         activeMember,
         setActiveMemberId,
+        fetchAdminMembers,
+        fetchAdminLedger,
+        fetchMemberWalletActivity,
         transactions,
         loanApplications,
         ledgerPostings,
@@ -1874,6 +2665,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         cardTransactions,
         oneTimeCredentials,
         setOneTimeCredentials,
+        cardSessionSecrets,
         isCreateCardModalOpen,
         openCreateCardModal,
         closeCreateCardModal,
@@ -1906,6 +2698,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         submitKycVerification,
         fetchAdminKycQueue,
         reviewKycSubmission,
+        updateAdminMember,
+        deleteAdminMember,
+        updateAdminKyc,
+        deleteAdminKyc,
         getAdminDocumentSignedUrl,
         markNotificationsRead,
         convertCurrency,

@@ -88,6 +88,30 @@ export const AdminFundWalletSchema = z.object({
 });
 export type AdminFundWalletInput = z.infer<typeof AdminFundWalletSchema>;
 
+/** Member-initiated request for wallet funding (admin credits after review). */
+export const CreateFundingRequestSchema = z.object({
+  amount: z.union([z.number(), z.string().min(1)]),
+  currency: z.enum(['USD', 'CAD', 'GBP', 'EUR']),
+  reason: z.string().trim().min(5, 'Please describe why you need funding').max(500),
+  sourceHint: z
+    .enum(['BANK_TRANSFER', 'WIRE', 'CARD', 'OTHER'])
+    .optional()
+    .default('BANK_TRANSFER'),
+});
+export type CreateFundingRequestInput = z.infer<typeof CreateFundingRequestSchema>;
+
+export const ReviewFundingRequestSchema = z
+  .object({
+    decision: z.enum(['APPROVE', 'REJECT']),
+    note: z.string().max(500).optional(),
+  })
+  .refine(
+    (data) =>
+      data.decision === 'APPROVE' || (!!data.note && data.note.trim().length >= 3),
+    { message: 'A note is required when rejecting a funding request', path: ['note'] },
+  );
+export type ReviewFundingRequestInput = z.infer<typeof ReviewFundingRequestSchema>;
+
 export const WalletTransferSchema = z.object({
   recipientMemberId: z.string().min(1, 'recipientMemberId is required'),
   amountMinor: z.number().int().positive('Amount must be positive integer minor units'),

@@ -87,3 +87,25 @@ export const ReviewKycInputSchema = z
     },
   );
 export type ReviewKycInput = z.infer<typeof ReviewKycInputSchema>;
+
+/** SUPER_ADMIN: edit KYC submission metadata / status */
+export const AdminUpdateKycSchema = z.object({
+  memberName: z.string().min(2).max(120).optional(),
+  memberEmail: z.string().email().optional(),
+  countryCode: z.string().length(2).optional(),
+  documentType: KycDocumentTypeSchema.optional(),
+  status: KycSubmissionStatusSchema.optional(),
+  reviewerNote: z.string().max(2000).nullable().optional(),
+  rejectionReason: z.string().max(2000).nullable().optional(),
+});
+export type AdminUpdateKycInput = z.infer<typeof AdminUpdateKycSchema>;
+
+/** SUPER_ADMIN: edit registered member profile */
+export const AdminUpdateMemberSchema = z.object({
+  fullName: z.string().min(2).max(120).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().min(5).max(40).nullable().optional(),
+  countryCode: z.string().length(2).optional(),
+  emailVerified: z.boolean().optional(),
+});
+export type AdminUpdateMemberInput = z.infer<typeof AdminUpdateMemberSchema>;

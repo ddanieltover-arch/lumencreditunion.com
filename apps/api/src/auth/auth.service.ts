@@ -5,6 +5,11 @@ import {
   LoginUserInput,
   LoginUserSchema,
   UserRole,
+  generateBankIdentity,
+  normalizeBankIdentity,
+  type BankIdentity,
+  type BankScheme,
+  type BankDetails,
 } from '@lumenfield/shared';
 import { hashPassword, verifyPassword } from './password.util';
 import {
@@ -25,6 +30,9 @@ import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '../config/config.service';
 import { CountriesService } from '../countries/countries.service';
 import { EmailService } from '../email/email.service';
+import { loadPersistedUsers, persistUser, deletePersistedUser } from './auth-persistence';
+import { loadPersistedKycSubmissions } from '../kyc/kyc-persistence';
+import type { AdminUpdateMemberInput } from '@lumenfield/shared';
 
 export interface UserRecord {
   id: string;
@@ -41,6 +49,11 @@ export interface UserRecord {
   mfaEnabled: boolean;
   mfaSecret: string | null;
   mfaRecoveryCodes: string[];
+  /** Country-format sandbox bank identity (members). */
+  bankScheme?: BankScheme | null;
+  bankDetails?: BankDetails | null;
+  accountNumberNormalized?: string | null;
+  accountNumberDisplay?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -69,11 +82,16 @@ export interface PasswordResetRecord {
 }
 
 export class AuthService {
+  private static instance: AuthService | null = null;
+
   private users: Map<string, UserRecord> = new Map();
   private sessions: Map<string, SessionRecord> = new Map();
   private passwordResetTokens: Map<string, PasswordResetRecord> = new Map();
   private emailVerificationTokens: Map<string, string> = new Map(); // token -> userId
   private mfaTickets: Map<string, { userId: string; expiresAt: number }> = new Map();
+  /** Monotonic sequence for unique sandbox account numbers. */
+  private bankAccountSeq = 100000;
+  private readonly normalizedAccountIndex = new Map<string, string>(); // normalized -> userId
   private readonly ready: Promise<void>;
   private bootstrapError: Error | null = null;
 
@@ -92,6 +110,20 @@ export class AuthService {
     });
   }
 
+  /** Process-wide singleton so member registry survives warm serverless / HMR remounts. */
+  static getInstance(
+    auditService?: AuditService,
+    configService?: ConfigService,
+  ): AuthService {
+    if (!AuthService.instance) {
+      AuthService.instance = new AuthService(
+        auditService || new AuditService(),
+        configService || ConfigService.getInstance(),
+      );
+    }
+    return AuthService.instance;
+  }
+
   /** Wait for admin seed before handling auth (avoids serverless race on cold start). */
   async ensureReady(): Promise<void> {
     await this.ready;
@@ -108,10 +140,204 @@ export class AuthService {
 
   private async bootstrapUsers() {
     await this.seedSuperAdmin();
+    await this.hydrateFromStore();
     // Demo member is only seeded in sandbox mode
     if (this.configService.isSandbox) {
       await this.seedMemberUser();
     }
+    // Ensure every member has country-format bank credentials
+    for (const user of this.users.values()) {
+      if (user.role === 'MEMBER') {
+        this.ensureBankIdentity(user);
+      }
+    }
+  }
+
+  private normalizeLoadedUser(raw: UserRecord): UserRecord {
+    return {
+      ...raw,
+      email: raw.email.toLowerCase(),
+      lockedUntil: raw.lockedUntil ? new Date(raw.lockedUntil as unknown as string) : null,
+      bankScheme: raw.bankScheme ?? null,
+      bankDetails: raw.bankDetails ?? null,
+      accountNumberNormalized: raw.accountNumberNormalized ?? null,
+      accountNumberDisplay: raw.accountNumberDisplay ?? null,
+    };
+  }
+
+  private async hydrateFromStore() {
+    try {
+      const persisted = await loadPersistedUsers();
+      for (const raw of persisted) {
+        const user = this.normalizeLoadedUser(raw);
+        const byEmail = Array.from(this.users.values()).find(
+          (u) => u.email.toLowerCase() === user.email.toLowerCase(),
+        );
+        // Keep the freshly seeded SUPER_ADMIN credentials; restore everyone else
+        if (byEmail?.role === 'SUPER_ADMIN' || user.role === 'SUPER_ADMIN') {
+          continue;
+        }
+        if (byEmail && byEmail.id !== user.id) {
+          this.users.delete(byEmail.id);
+        }
+        this.users.set(user.id, user);
+        if (user.accountNumberNormalized) {
+          this.normalizedAccountIndex.set(user.accountNumberNormalized, user.id);
+        }
+      }
+      if (persisted.length) {
+        console.log(`[AuthService] Restored ${persisted.length} user(s) from database.`);
+      }
+
+      // Recover members known from durable KYC rows when auth memory was lost
+      const kycSubs = await loadPersistedKycSubmissions();
+      for (const sub of kycSubs) {
+        if (!sub?.memberId || !sub?.memberEmail) continue;
+        this.ensureMemberFromProfile({
+          id: sub.memberId,
+          email: sub.memberEmail,
+          fullName: sub.memberName || sub.memberEmail,
+          countryCode: sub.countryCode,
+        });
+      }
+    } catch (err) {
+      console.error('[AuthService] Hydration failed:', err);
+    }
+  }
+
+  /** Durable write for the in-memory registry (serverless-safe). */
+  private saveUser(user: UserRecord) {
+    user.updatedAt = new Date().toISOString();
+    this.users.set(user.id, user);
+    void persistUser(user);
+  }
+
+  /**
+   * Ensure a MEMBER exists for admin directory / KYC recovery when auth memory was lost.
+   * Creates a stub that can complete login via password reset.
+   */
+  ensureMemberFromProfile(input: {
+    id: string;
+    email: string;
+    fullName: string;
+    countryCode?: string;
+  }): UserRecord {
+    const email = input.email.toLowerCase();
+    const existing =
+      this.users.get(input.id) ||
+      Array.from(this.users.values()).find((u) => u.email.toLowerCase() === email);
+    if (existing) {
+      if (existing.role === 'MEMBER' && !existing.accountNumberNormalized) {
+        this.ensureBankIdentity(existing);
+        this.saveUser(existing);
+      }
+      return existing;
+    }
+
+    const now = new Date().toISOString();
+    const stub: UserRecord = {
+      id: input.id,
+      email,
+      // Unusable placeholder — member must use password reset to sign in again
+      passwordHash: 'RECOVERY_REQUIRED',
+      fullName: input.fullName || email,
+      phone: null,
+      countryCode: (input.countryCode || 'US').toUpperCase(),
+      dateOfBirth: '1990-01-01',
+      role: 'MEMBER',
+      emailVerified: true,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaRecoveryCodes: [],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.assignBankIdentity(stub);
+    this.saveUser(stub);
+    return stub;
+  }
+
+  /**
+   * Mint (or return existing) country-accurate sandbox bank identity.
+   * Collision-safe against the in-memory unique index.
+   */
+  assignBankIdentity(user: UserRecord): BankIdentity {
+    if (
+      user.accountNumberNormalized &&
+      user.bankScheme &&
+      user.bankDetails &&
+      user.accountNumberDisplay
+    ) {
+      return {
+        scheme: user.bankScheme,
+        details: user.bankDetails,
+        accountNumberNormalized: user.accountNumberNormalized,
+        accountNumberDisplay: user.accountNumberDisplay,
+      };
+    }
+
+    for (let attempt = 0; attempt < 25; attempt++) {
+      const sequence = this.bankAccountSeq++;
+      const identity = generateBankIdentity(user.countryCode || 'US', sequence);
+      if (this.normalizedAccountIndex.has(identity.accountNumberNormalized)) {
+        continue;
+      }
+      this.applyBankIdentity(user, identity);
+      return identity;
+    }
+    throw new Error('Could not allocate a unique bank account number.');
+  }
+
+  ensureBankIdentity(user: UserRecord): BankIdentity {
+    return this.assignBankIdentity(user);
+  }
+
+  private applyBankIdentity(user: UserRecord, identity: BankIdentity) {
+    if (
+      user.accountNumberNormalized &&
+      this.normalizedAccountIndex.get(user.accountNumberNormalized) === user.id
+    ) {
+      this.normalizedAccountIndex.delete(user.accountNumberNormalized);
+    }
+    user.bankScheme = identity.scheme;
+    user.bankDetails = identity.details;
+    user.accountNumberNormalized = identity.accountNumberNormalized;
+    user.accountNumberDisplay = identity.accountNumberDisplay;
+    this.normalizedAccountIndex.set(identity.accountNumberNormalized, user.id);
+  }
+
+  findUserByAccountNumber(query: string): UserRecord | undefined {
+    const normalized = normalizeBankIdentity(query);
+    if (!normalized) return undefined;
+    const userId = this.normalizedAccountIndex.get(normalized);
+    if (userId) return this.users.get(userId);
+
+    // Also match bare account number / IBAN primary fields
+    for (const user of this.users.values()) {
+      if (!user.accountNumberNormalized) continue;
+      if (user.accountNumberNormalized === normalized) return user;
+      const details = user.bankDetails;
+      if (!details) continue;
+      if (details.accountNumber && normalizeBankIdentity(details.accountNumber) === normalized) {
+        return user;
+      }
+      if (details.primary && normalizeBankIdentity(details.primary) === normalized) {
+        return user;
+      }
+      if (details.iban && normalizeBankIdentity(details.iban) === normalized) {
+        return user;
+      }
+      if (
+        details.sortCode &&
+        details.accountNumber &&
+        normalizeBankIdentity(`${details.sortCode}${details.accountNumber}`) === normalized
+      ) {
+        return user;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -174,7 +400,7 @@ export class AuthService {
       updatedAt: new Date().toISOString(),
     };
 
-    this.users.set(superAdmin.id, superAdmin);
+    this.saveUser(superAdmin);
     console.log(`[AuthService] Seeded SUPER_ADMIN: ${adminEmail}`);
     return superAdmin;
   }
@@ -213,8 +439,11 @@ export class AuthService {
       updatedAt: new Date().toISOString(),
     };
 
-    this.users.set(member.id, member);
-    console.log(`[AuthService] Seeded demo MEMBER: ${memberEmail}`);
+    this.assignBankIdentity(member);
+    this.saveUser(member);
+    console.log(
+      `[AuthService] Seeded demo MEMBER: ${memberEmail} · ${member.accountNumberDisplay}`,
+    );
     return member;
   }
 
@@ -275,7 +504,9 @@ export class AuthService {
       updatedAt: now,
     };
 
-    this.users.set(user.id, user);
+    if (user.role === 'MEMBER') {
+      this.assignBankIdentity(user);
+    }
 
     // 4. Generate Email Verification Token
     const verificationToken = crypto.randomBytes(32).toString('hex');
@@ -289,6 +520,8 @@ export class AuthService {
       user.emailVerified = true;
       void this.emailService.sendWelcomeEmail(user.email, user.fullName);
     }
+
+    this.saveUser(user);
 
     // 6. Audit log
     await this.auditService.record({
@@ -333,8 +566,8 @@ export class AuthService {
       throw new Error('User not found.');
     }
     user.emailVerified = true;
-    user.updatedAt = new Date().toISOString();
     this.emailVerificationTokens.delete(token);
+    this.saveUser(user);
     void this.emailService.sendWelcomeEmail(user.email, user.fullName);
     return true;
   }
@@ -404,6 +637,12 @@ export class AuthService {
       }
     }
 
+    if (user.passwordHash === 'RECOVERY_REQUIRED') {
+      throw new Error(
+        'This account was restored after a system recovery. Please use Forgot password to set a new password before signing in.',
+      );
+    }
+
     // 2. Verify password with Argon2
     const passwordValid = await verifyPassword(user.passwordHash, validated.password);
     if (!passwordValid) {
@@ -430,6 +669,7 @@ export class AuthService {
         userAgent,
       });
 
+      this.saveUser(user);
       if (isNowLocked) {
         void this.emailService.sendAccountLockedEmail(user.email, user.fullName, 15);
         throw new Error(
@@ -442,6 +682,12 @@ export class AuthService {
     // Reset failed attempts on valid password
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
+
+    // Backfill bank identity for members created before this feature
+    if (user.role === 'MEMBER') {
+      this.ensureBankIdentity(user);
+    }
+    this.saveUser(user);
 
     // 3. Multi-Factor Authentication check (after member enrolls TOTP)
     const isMfaRequired = user.mfaEnabled;
@@ -891,7 +1137,7 @@ export class AuthService {
     user.mfaEnabled = true;
     user.mfaSecret = secret;
     user.mfaRecoveryCodes = recoveryCodes;
-    user.updatedAt = new Date().toISOString();
+    this.saveUser(user);
 
     await this.auditService.record({
       actorId: user.id,
@@ -936,7 +1182,7 @@ export class AuthService {
     user.mfaEnabled = false;
     user.mfaSecret = null;
     user.mfaRecoveryCodes = [];
-    user.updatedAt = new Date().toISOString();
+    this.saveUser(user);
 
     await this.auditService.record({
       actorId: user.id,
@@ -1012,8 +1258,8 @@ export class AuthService {
 
     const newHash = await hashPassword(newPassword);
     user.passwordHash = newHash;
-    user.updatedAt = new Date().toISOString();
     record.used = true;
+    this.saveUser(user);
 
     // Security: Revoke all existing sessions upon password reset
     for (const session of this.sessions.values()) {
@@ -1054,7 +1300,7 @@ export class AuthService {
     }
 
     user.passwordHash = await hashPassword(newPass);
-    user.updatedAt = new Date().toISOString();
+    this.saveUser(user);
 
     // Revoke all OTHER sessions
     await this.revokeAllOtherSessions(userId, currentSessionId, ipAddress);
@@ -1076,15 +1322,140 @@ export class AuthService {
   }
 
   getUserById(userId: string): UserRecord | undefined {
-    return this.users.get(userId);
+    const user = this.users.get(userId);
+    if (user && user.role === 'MEMBER' && !user.accountNumberNormalized) {
+      this.ensureBankIdentity(user);
+    }
+    return user;
   }
 
   findUserById(userId: string): UserRecord | undefined {
-    return this.users.get(userId);
+    return this.getUserById(userId);
   }
 
   getAllUsers(): UserRecord[] {
     return Array.from(this.users.values());
+  }
+
+  /**
+   * SUPER_ADMIN: update a member profile (never the super admin account).
+   */
+  async updateMember(
+    memberId: string,
+    input: AdminUpdateMemberInput,
+    adminId: string,
+    ipAddress: string,
+  ): Promise<Omit<UserRecord, 'passwordHash' | 'mfaSecret' | 'mfaRecoveryCodes'>> {
+    await this.ensureReady();
+    const user = this.users.get(memberId);
+    if (!user || user.role !== 'MEMBER') {
+      throw new Error('Member not found.');
+    }
+
+    const before = {
+      fullName: user.fullName,
+      email: user.email,
+      phone: user.phone,
+      countryCode: user.countryCode,
+      emailVerified: user.emailVerified,
+    };
+
+    if (input.email && input.email.toLowerCase() !== user.email.toLowerCase()) {
+      const emailLower = input.email.toLowerCase();
+      const clash = Array.from(this.users.values()).find(
+        (u) => u.email.toLowerCase() === emailLower && u.id !== user.id,
+      );
+      if (clash) {
+        throw new Error('Another account already uses that email address.');
+      }
+      user.email = emailLower;
+    }
+    if (input.fullName !== undefined) user.fullName = input.fullName.trim();
+    if (input.phone !== undefined) user.phone = input.phone;
+    if (input.countryCode !== undefined) {
+      user.countryCode = input.countryCode.toUpperCase();
+    }
+    if (input.emailVerified !== undefined) user.emailVerified = input.emailVerified;
+
+    this.saveUser(user);
+
+    await this.auditService.record({
+      actorId: adminId,
+      actorRole: 'SUPER_ADMIN',
+      action: 'ADMIN_UPDATE_MEMBER_STATUS',
+      targetType: 'USER',
+      targetId: user.id,
+      beforeState: before,
+      afterState: {
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        countryCode: user.countryCode,
+        emailVerified: user.emailVerified,
+      },
+      ipAddress,
+    });
+
+    const { passwordHash: _p, mfaSecret: _s, mfaRecoveryCodes: _r, ...safe } = user;
+    return safe;
+  }
+
+  /**
+   * SUPER_ADMIN: permanently remove a member account (and revoke sessions).
+   */
+  async deleteMember(
+    memberId: string,
+    adminId: string,
+    ipAddress: string,
+  ): Promise<{ deleted: true; memberId: string; email: string }> {
+    await this.ensureReady();
+    const user =
+      this.users.get(memberId) ||
+      Array.from(this.users.values()).find(
+        (u) => u.email.toLowerCase() === memberId.toLowerCase(),
+      );
+    if (!user || user.role !== 'MEMBER') {
+      throw new Error('Member not found.');
+    }
+    if (user.id === '00000000-0000-0000-0000-000000000001') {
+      throw new Error('Administrator accounts cannot be deleted from the member directory.');
+    }
+
+    const email = user.email;
+    if (user.accountNumberNormalized) {
+      this.normalizedAccountIndex.delete(user.accountNumberNormalized);
+    }
+
+    for (const session of this.sessions.values()) {
+      if (session.userId === user.id) {
+        session.isRevoked = true;
+        session.revokedAt = new Date();
+      }
+    }
+
+    this.users.delete(user.id);
+    try {
+      await deletePersistedUser(user.id);
+    } catch (persistErr) {
+      console.error('[AuthService] Failed to delete persisted user (memory already cleared):', persistErr);
+    }
+
+    try {
+      await this.auditService.record({
+        actorId: adminId,
+        actorRole: 'SUPER_ADMIN',
+        action: 'ADMIN_UPDATE_MEMBER_STATUS',
+        targetType: 'USER',
+        targetId: user.id,
+        beforeState: { email, fullName: user.fullName, role: user.role },
+        afterState: { deleted: true },
+        ipAddress,
+      });
+    } catch (auditErr) {
+      console.error('[AuthService] Audit after member delete failed:', auditErr);
+    }
+
+    return { deleted: true, memberId: user.id, email };
   }
 
   private parseDeviceInfo(userAgent?: string): string {

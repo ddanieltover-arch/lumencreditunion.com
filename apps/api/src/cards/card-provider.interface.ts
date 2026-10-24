@@ -73,7 +73,7 @@ export class SandboxCardProvider implements CardProvider {
       expiryMonth,
       expiryYear,
       expiryFormatted,
-      brand: 'Lumenfield Visa',
+      brand: 'Lumenfield Visa (TEST)',
       isTest: true,
     };
   }

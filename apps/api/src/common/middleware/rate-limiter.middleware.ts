@@ -7,14 +7,36 @@ interface ClientBucket {
 
 const buckets = new Map<string, ClientBucket>();
 
+/** API path prefixes — SPA/Vite assets must not consume this budget. */
+const API_PREFIXES = [
+  '/auth',
+  '/admin',
+  '/kyc',
+  '/wallet',
+  '/transfers',
+  '/cards',
+  '/loans',
+  '/countries',
+  '/health',
+  '/config',
+];
+
+export function isApiRequestPath(path: string): boolean {
+  const pathname = path.split('?')[0] || '/';
+  return API_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 export interface RateLimiterOptions {
   windowMs?: number; // default: 60,000ms (1 min)
-  max?: number;      // default: 100 requests per window
+  max?: number; // default: 100 requests per window
+  /** When true (default for global limiter), only count API routes. */
+  apiOnly?: boolean;
 }
 
 export function createRateLimiter(options: RateLimiterOptions = {}) {
   const windowMs = options.windowMs || 60_000;
   const max = options.max || 100;
+  const apiOnly = options.apiOnly === true;
 
   // Cleanup expired buckets periodically
   setInterval(() => {
@@ -27,6 +49,12 @@ export function createRateLimiter(options: RateLimiterOptions = {}) {
   }, windowMs).unref();
 
   return (req: Request, res: Response, next: NextFunction) => {
+    const path = req.originalUrl || req.url || '/';
+    if (apiOnly && !isApiRequestPath(path)) {
+      next();
+      return;
+    }
+
     const key = (req.ip || req.socket.remoteAddress || 'unknown').toString();
     const now = Date.now();
 
@@ -57,4 +85,9 @@ export function createRateLimiter(options: RateLimiterOptions = {}) {
 
     next();
   };
+}
+
+/** Clears in-memory buckets (useful after local 429 lockouts). */
+export function resetRateLimitBuckets(): void {
+  buckets.clear();
 }

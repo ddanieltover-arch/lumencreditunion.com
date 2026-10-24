@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const CardCurrencySchema = z.enum(['USD', 'CAD', 'GBP', 'EUR']);
 export type CardCurrency = z.infer<typeof CardCurrencySchema>;
 
-export const CardStatusSchema = z.enum(['ACTIVE', 'FROZEN', 'TERMINATED']);
+export const CardStatusSchema = z.enum(['ACTIVE', 'FROZEN', 'SUSPENDED', 'TERMINATED']);
 export type CardStatus = z.infer<typeof CardStatusSchema>;
 
 export const CreateCardSchema = z.object({
@@ -44,6 +44,45 @@ export const UpdateCardStatusSchema = z.object({
   reason: z.string().max(255).optional(),
 });
 export type UpdateCardStatusInput = z.infer<typeof UpdateCardStatusSchema>;
+
+export const AdminUpdateCardSchema = z
+  .object({
+    cardholderName: z.string().min(2).max(100).optional(),
+    dailyLimitMinor: z.number().int().positive().optional(),
+    monthlyLimitMinor: z.number().int().positive().optional(),
+    status: CardStatusSchema.optional(),
+    reason: z.string().max(255).optional(),
+    resetSpentToday: z.boolean().optional(),
+    resetSpentThisMonth: z.boolean().optional(),
+  })
+  .refine(
+    (data) =>
+      data.dailyLimitMinor === undefined ||
+      data.monthlyLimitMinor === undefined ||
+      data.dailyLimitMinor <= data.monthlyLimitMinor,
+    {
+      message: 'Daily limit cannot exceed monthly limit',
+      path: ['dailyLimitMinor'],
+    },
+  );
+export type AdminUpdateCardInput = z.infer<typeof AdminUpdateCardSchema>;
+
+export const AdminCreateCardSchema = z.object({
+  memberId: z.string().min(1, 'Member ID is required'),
+  currency: CardCurrencySchema,
+  cardholderName: z.string().min(2).max(100).optional(),
+  dailyLimitMinor: z.number().int().positive().optional(),
+  monthlyLimitMinor: z.number().int().positive().optional(),
+});
+export type AdminCreateCardInput = z.infer<typeof AdminCreateCardSchema>;
+
+export const AdminCreditCardWalletSchema = z.object({
+  amountMinor: z.number().int().positive('Credit amount must be a positive integer in minor units'),
+  reason: z.string().min(3).max(255).optional(),
+  reference: z.string().min(3).max(64).optional(),
+  idempotencyKey: z.string().min(6).max(128).optional(),
+});
+export type AdminCreditCardWalletInput = z.infer<typeof AdminCreditCardWalletSchema>;
 
 export const SimulateCardPurchaseSchema = z.object({
   amountMinor: z

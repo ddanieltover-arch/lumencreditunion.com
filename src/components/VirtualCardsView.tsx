@@ -1,19 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   CreditCard,
   Lock,
   Unlock,
   Sliders,
-  ShoppingCart,
   Plus,
-  RefreshCw,
-  CheckCircle2,
-  AlertCircle,
-  ExternalLink,
   Shield,
-  Clock,
-  ArrowUpRight,
+  Eye,
   EyeOff,
 } from 'lucide-react';
 import { CardCurrency, formatMoney } from '@lumenfield/shared';
@@ -27,39 +21,69 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
     virtualCards,
     activeCardId,
     setActiveCardId,
-    fetchCards,
     toggleCardFreeze,
     openCardLimitsModal,
-    openSimulatePurchaseModal,
     openCreateCardModal,
-    fetchCardTransactions,
-    cardTransactions,
     activeMember,
+    cardSessionSecrets,
+    showToast,
   } = useApp();
 
   const [selectedCurrency, setSelectedCurrency] = useState<CardCurrency>('USD');
-  const [loadingTx, setLoadingTx] = useState(false);
+  const [credentialsVisible, setCredentialsVisible] = useState(false);
 
-  // Cards for the selected currency wallet
-  const cardsInCurrency = virtualCards.filter((c) => c.currency === selectedCurrency);
-  // Current active card
-  const activeCard =
-    virtualCards.find((c) => c.id === activeCardId && c.currency === selectedCurrency) ||
-    cardsInCurrency[0] ||
-    virtualCards[0] ||
-    null;
+  // Strictly cards for the selected wallet currency — never cross-currency fallbacks
+  const cardsInCurrency = virtualCards.filter(
+    (c) => String(c.currency || '').toUpperCase() === selectedCurrency,
+  );
+
+  // Full cards tab: only selected currency. Compact overview: any active/first card.
+  const activeCard = compact
+    ? virtualCards.find((c) => c.id === activeCardId) || virtualCards[0] || null
+    : cardsInCurrency.find((c) => c.id === activeCardId) || cardsInCurrency[0] || null;
+
+  const activeSecrets = activeCard ? cardSessionSecrets[activeCard.id] : undefined;
 
   useEffect(() => {
-    if (activeCard) {
-      setLoadingTx(true);
-      fetchCardTransactions(activeCard.id).finally(() => setLoadingTx(false));
-    }
+    setCredentialsVisible(false);
   }, [activeCard?.id]);
+
+  useEffect(() => {
+    if (compact) return;
+    if (activeCard && activeCardId !== activeCard.id) {
+      setActiveCardId(activeCard.id);
+      return;
+    }
+    if (!activeCard && activeCardId) {
+      const stillBelongs = virtualCards.some(
+        (c) =>
+          c.id === activeCardId &&
+          String(c.currency || '').toUpperCase() === selectedCurrency,
+      );
+      if (!stillBelongs) setActiveCardId(null);
+    }
+  }, [compact, selectedCurrency, activeCard?.id, activeCardId, virtualCards]);
 
   const currencySymbol =
     selectedCurrency === 'USD' ? '$' : selectedCurrency === 'CAD' ? 'C$' : selectedCurrency === 'GBP' ? '£' : '€';
 
-  const walletBalance = activeMember.wallets[selectedCurrency] || 0;
+  const walletBalance = activeMember?.wallets[selectedCurrency] || 0;
+
+  const displayPan =
+    credentialsVisible && activeSecrets ? activeSecrets.fullPan : activeCard?.maskedPan || '';
+  const displayCvv =
+    credentialsVisible && activeSecrets ? activeSecrets.cvv : '•••';
+
+  const toggleCredentialsVisible = () => {
+    if (!activeSecrets) {
+      showToast(
+        'Full card number and CVV are only available for cards issued in this browser session.',
+        'info',
+      );
+      return;
+    }
+    setCredentialsVisible((v) => !v);
+  };
 
   // Render compact widget for Dashboard Overview
   if (compact) {
@@ -114,19 +138,13 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
           </span>
         </div>
 
-        {/* Card Visual (Matches Dashboard Reference Component) */}
-        <div
-          onClick={() => openSimulatePurchaseModal(activeCard)}
-          title="Make a card purchase"
-          className="bg-gradient-to-br from-[#F5B942] to-[#E5A832] text-[#0E1B1F] rounded-[18px] p-5 flex flex-col justify-between h-[156px] shadow-sm hover:shadow-md transition-all relative overflow-hidden cursor-pointer border border-[#DE9E22]"
-        >
+        {/* Card Visual */}
+        <div className="bg-gradient-to-br from-[#F5B942] to-[#E5A832] text-[#0E1B1F] rounded-[18px] p-5 flex flex-col justify-between h-[156px] shadow-sm relative overflow-hidden border border-[#DE9E22]">
           <div className="flex justify-between items-center font-display font-bold text-[15px]">
             <span>Lumenfield</span>
-            <div className="flex items-center gap-1.5">
-              <span className="font-mono text-[11px] font-semibold uppercase bg-[#0E1B1F] text-[#F5B942] px-1.5 py-0.5 rounded">
-                TEST
-              </span>
-            </div>
+            <span className="text-[11px] font-bold bg-white/70 px-1.5 py-0.5 rounded">
+              {activeCard.currency}
+            </span>
           </div>
 
           <div className="font-mono font-semibold text-lg tracking-[0.14em]">
@@ -160,7 +178,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
         </div>
 
         {/* Card Actions */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <button
             type="button"
             onClick={() => toggleCardFreeze(activeCard.id)}
@@ -187,15 +205,6 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
             <Sliders className="w-3.5 h-3.5 text-[#4A5B60]" />
             <span>Limits</span>
           </button>
-
-          <button
-            type="button"
-            onClick={() => openSimulatePurchaseModal(activeCard)}
-            className="inline-flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-bold text-xs transition-all cursor-pointer shadow-2xs"
-          >
-            <ShoppingCart className="w-3.5 h-3.5" />
-            <span>Purchase</span>
-          </button>
         </div>
       </div>
     );
@@ -208,7 +217,9 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
       <div className="bg-white border border-[#DCE5E3] rounded-3xl p-5 shadow-xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-2">
           {(['USD', 'CAD', 'GBP', 'EUR'] as CardCurrency[]).map((cur) => {
-            const count = virtualCards.filter((c) => c.currency === cur).length;
+            const count = virtualCards.filter(
+              (c) => String(c.currency || '').toUpperCase() === cur,
+            ).length;
             const isSelected = selectedCurrency === cur;
             return (
               <button
@@ -216,8 +227,10 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                 type="button"
                 onClick={() => {
                   setSelectedCurrency(cur);
-                  const first = virtualCards.find((c) => c.currency === cur);
-                  if (first) setActiveCardId(first.id);
+                  const first = virtualCards.find(
+                    (c) => String(c.currency || '').toUpperCase() === cur,
+                  );
+                  setActiveCardId(first ? first.id : null);
                 }}
                 className={`px-4 py-2.5 rounded-2xl text-xs font-semibold transition cursor-pointer flex items-center gap-2 ${
                   isSelected
@@ -272,10 +285,9 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
         </div>
       )}
 
-      {/* Main Grid: Card Visual + Details & Limits (Left) & Recent Transactions (Right) */}
+      {/* Card Visual + Details & Limits */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Col (5 cols): Visual Card & Management */}
-        <div className="lg:col-span-5 flex flex-col gap-5">
+        <div className="lg:col-span-6 xl:col-span-5 flex flex-col gap-5">
           {activeCard ? (
             <div className="bg-white border border-[#DCE5E3] rounded-3xl p-6 sm:p-7 shadow-xs flex flex-col gap-6">
               <div className="flex items-center justify-between">
@@ -300,18 +312,13 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
               <div className="bg-gradient-to-br from-[#F5B942] via-[#F0B033] to-[#D99A22] text-[#0E1B1F] rounded-2xl p-6 shadow-md flex flex-col justify-between h-[200px] relative overflow-hidden border border-[#D0901A]">
                 <div className="flex justify-between items-center">
                   <span className="font-display font-bold text-lg tracking-wide">Lumenfield</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs uppercase font-bold bg-[#0E1B1F] text-[#F5B942] px-2 py-0.5 rounded">
-                      TEST
-                    </span>
-                    <span className="text-xs font-bold bg-white/70 px-2 py-0.5 rounded">
-                      {activeCard.currency}
-                    </span>
-                  </div>
+                  <span className="text-xs font-bold bg-white/70 px-2 py-0.5 rounded">
+                    {activeCard.currency}
+                  </span>
                 </div>
 
                 <div className="font-mono font-bold text-2xl tracking-[0.16em] py-1 select-all">
-                  {activeCard.maskedPan}
+                  {displayPan}
                 </div>
 
                 <div className="flex justify-between items-end text-xs font-semibold">
@@ -325,18 +332,66 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                   </div>
                   <div>
                     <div className="text-[10px] uppercase text-[#0E1B1F]/60">Security CVV</div>
-                    <div className="font-mono text-sm">•••</div>
+                    <div className="font-mono text-sm tracking-wider">{displayCvv}</div>
                   </div>
                 </div>
               </div>
 
-              {/* Status and Single View Notice */}
-              <div className="p-3.5 rounded-xl bg-[#F4F7F6] border border-[#DCE5E3] text-xs text-[#4A5B60] flex items-start gap-2.5">
-                <Shield className="w-4 h-4 text-[#0F766E] shrink-0 mt-0.5" />
-                <span>
-                  <strong>Strict Privacy:</strong> The full PAN and CVV are never stored in Lumenfield and were
-                  displayed only once on creation. Purchases are authorized through tokenized rails.
-                </span>
+              {/* Privacy notice + Show / Hide credentials */}
+              <div className="p-3.5 rounded-xl bg-[#F4F7F6] border border-[#DCE5E3] text-xs text-[#4A5B60] flex flex-col gap-3">
+                <div className="flex items-start gap-2.5">
+                  <Shield className="w-4 h-4 text-[#0F766E] shrink-0 mt-0.5" />
+                  <span>
+                    <strong className="text-[#0E1B1F]">Strict Privacy:</strong> The full PAN and CVV are never
+                    stored on Lumenfield servers. Use Show / Hide to reveal them for cards issued in this
+                    browser session.
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1 border-t border-[#DCE5E3]">
+                  <div className="text-xs font-medium text-[#0E1B1F]">
+                    {credentialsVisible ? 'Credentials visible' : 'Credentials hidden'}
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={credentialsVisible}
+                    aria-label={
+                      credentialsVisible ? 'Hide card number and CVV' : 'Show card number and CVV'
+                    }
+                    onClick={toggleCredentialsVisible}
+                    className={`inline-flex items-center gap-2 min-h-[40px] pl-1.5 pr-3 rounded-full border transition cursor-pointer ${
+                      credentialsVisible
+                        ? 'bg-[#0A3D3F] border-[#0A3D3F] text-white'
+                        : 'bg-white border-[#BCCAC8] text-[#0E1B1F] hover:bg-slate-50'
+                    }`}
+                  >
+                    <span
+                      className={`relative w-10 h-6 rounded-full transition-colors ${
+                        credentialsVisible ? 'bg-[#F5B942]' : 'bg-[#DCE5E3]'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-transform ${
+                          credentialsVisible ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </span>
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold">
+                      {credentialsVisible ? (
+                        <>
+                          <EyeOff className="w-3.5 h-3.5" />
+                          Hide
+                        </>
+                      ) : (
+                        <>
+                          <Eye className="w-3.5 h-3.5" />
+                          Show
+                        </>
+                      )}
+                    </span>
+                  </button>
+                </div>
               </div>
 
               {/* Limits Summary Progress */}
@@ -388,7 +443,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
               </div>
 
               {/* Action Buttons */}
-              <div className="grid grid-cols-3 gap-2.5 pt-2">
+              <div className="grid grid-cols-2 gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => toggleCardFreeze(activeCard.id)}
@@ -415,15 +470,6 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                   <Sliders className="w-3.5 h-3.5 text-[#4A5B60]" />
                   <span>Set Limits</span>
                 </button>
-
-                <button
-                  type="button"
-                  onClick={() => openSimulatePurchaseModal(activeCard)}
-                  className="inline-flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-bold text-xs transition cursor-pointer shadow-xs"
-                >
-                  <ShoppingCart className="w-3.5 h-3.5" />
-                  <span>Purchase</span>
-                </button>
               </div>
             </div>
           ) : (
@@ -449,119 +495,6 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                 <Plus className="w-4 h-4 text-[#F5B942]" />
                 <span>Issue {selectedCurrency} Card</span>
               </button>
-            </div>
-          )}
-        </div>
-
-        {/* Right Col (7 cols): Card Recent Purchases */}
-        <div className="lg:col-span-7 bg-white border border-[#DCE5E3] rounded-3xl p-6 sm:p-7 shadow-xs flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-display font-bold text-lg text-[#0E1B1F]">
-                Card Purchase Activity
-              </h3>
-              <p className="text-xs text-[#4A5B60] mt-0.5">
-                Point-of-sale and e-commerce authorizations posted to the double-entry ledger.
-              </p>
-            </div>
-
-            {activeCard && (
-              <button
-                type="button"
-                onClick={() => activeCard && fetchCardTransactions(activeCard.id)}
-                disabled={loadingTx}
-                className="p-2 rounded-xl border border-[#CFDAD8] text-[#4A5B60] hover:bg-slate-50 transition cursor-pointer"
-                title="Refresh transactions"
-              >
-                <RefreshCw className={`w-4 h-4 ${loadingTx ? 'animate-spin' : ''}`} />
-              </button>
-            )}
-          </div>
-
-          {/* Transactions List */}
-          {activeCard && cardTransactions && cardTransactions.length > 0 ? (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[500px] border-collapse text-sm">
-                <thead>
-                  <tr className="text-left text-[#4A5B60] text-xs font-semibold tracking-wider border-b border-[#DCE5E3]">
-                    <th className="py-2.5 px-2">MERCHANT</th>
-                    <th className="py-2.5 px-2">TIME (UTC)</th>
-                    <th className="py-2.5 px-2">STATUS</th>
-                    <th className="py-2.5 px-2 text-right">AMOUNT</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cardTransactions.map((tx) => {
-                    const isApproved = tx.status === 'APPROVED';
-                    return (
-                      <tr
-                        key={tx.id}
-                        className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/60 transition-colors"
-                      >
-                        <td className="py-3 px-2">
-                          <div className="font-medium text-[#0E1B1F] flex items-center gap-1.5">
-                            <span>{tx.merchantName}</span>
-                          </div>
-                          <div className="text-[11px] text-[#4A5B60] flex items-center gap-2">
-                            <span>{tx.merchantCategory}</span>
-                            {tx.ledgerTransactionId && (
-                              <span className="font-mono text-[10px] text-[#0F766E]">
-                                Ref: {tx.ledgerTransactionId.slice(0, 12)}...
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-2 text-xs font-mono text-[#4A5B60]">
-                          {new Date(tx.createdAt).toLocaleTimeString([], {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                            second: '2-digit',
-                          })}
-                        </td>
-                        <td className="py-3 px-2">
-                          <span
-                            className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${
-                              isApproved ? 'bg-[#E3F3F1] text-[#0A4F4A]' : 'bg-red-50 text-red-700'
-                            }`}
-                          >
-                            {isApproved ? 'Approved' : 'Declined'}
-                          </span>
-                          {!isApproved && tx.declineReason && (
-                            <div className="text-[11px] text-red-600 mt-0.5 max-w-[200px] leading-tight">
-                              {tx.declineReason}
-                            </div>
-                          )}
-                        </td>
-                        <td
-                          className={`py-3 px-2 text-right font-semibold font-mono ${
-                            isApproved ? 'text-[#0E1B1F]' : 'text-slate-400 line-through'
-                          }`}
-                        >
-                          -{formatMoney({ amountMinor: tx.amountMinor, currency: tx.currency })}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="py-12 flex flex-col items-center justify-center text-center gap-3 border border-dashed border-[#DCE5E3] rounded-2xl">
-              <Clock className="w-8 h-8 text-[#8FA5A3]" />
-              <div className="text-sm font-semibold text-[#0E1B1F]">No purchases recorded yet</div>
-              <p className="text-xs text-[#4A5B60] max-w-sm">
-                Use the <strong>Purchase</strong> button to execute merchant debits and verify
-                server-side limits and ledger balance debits.
-              </p>
-              {activeCard && (
-                <button
-                  type="button"
-                  onClick={() => openSimulatePurchaseModal(activeCard)}
-                  className="mt-1 px-4 py-2 rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] text-xs font-bold transition shadow-xs cursor-pointer"
-                >
-                  Make First Purchase
-                </button>
-              )}
             </div>
           )}
         </div>

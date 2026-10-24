@@ -34,7 +34,7 @@ export const KycVerificationModal: React.FC = () => {
   } = useApp();
 
   const [selectedCountryCode, setSelectedCountryCode] = useState<string>(
-    activeMember.countryCode || 'US'
+    activeMember?.countryCode || 'US'
   );
   const [selectedDocType, setSelectedDocType] = useState<KycDocumentType>('PASSPORT');
   const [frontDoc, setFrontDoc] = useState<FileUploadState>({
@@ -72,6 +72,11 @@ export const KycVerificationModal: React.FC = () => {
     'ID_CARD',
     'RESIDENCE_PERMIT',
   ]) as KycDocumentType[];
+
+  const needsBothSides =
+    selectedDocType === 'DRIVERS_LICENSE' ||
+    selectedDocType === 'ID_CARD' ||
+    selectedDocType === 'RESIDENCE_PERMIT';
 
   // Max 10 MB limit as specified in task requirements
   const MAX_FILE_SIZE = 10 * 1024 * 1024;
@@ -137,7 +142,16 @@ export const KycVerificationModal: React.FC = () => {
     }
 
     if (!frontDoc.file || !frontDoc.base64) {
-      setSubmissionError('Please select a front/photo-page document file to upload.');
+      setSubmissionError(
+        needsBothSides
+          ? 'Please upload the front of your document.'
+          : 'Please select a front/photo-page document file to upload.',
+      );
+      return;
+    }
+
+    if (needsBothSides && (!backDoc.file || !backDoc.base64)) {
+      setSubmissionError('Please upload the back of your document.');
       return;
     }
 
@@ -300,7 +314,10 @@ export const KycVerificationModal: React.FC = () => {
                     <button
                       key={item.type}
                       type="button"
-                      onClick={() => setSelectedDocType(item.type)}
+                      onClick={() => {
+                        setSelectedDocType(item.type);
+                        setBackDoc({ file: null, base64: '', previewUrl: null, error: null });
+                      }}
                       className={`p-3 rounded-xl border text-left flex items-center gap-2.5 transition cursor-pointer ${
                         isSelected
                           ? 'border-[#0A3D3F] bg-[#0A3D3F]/5 text-[#0A3D3F] font-bold shadow-xs'
@@ -319,7 +336,9 @@ export const KycVerificationModal: React.FC = () => {
           <div>
             <div className="mb-1.5">
               <label className="text-xs font-bold text-[#0E1B1F]">
-                3. Front / Bio Page File (PDF, JPG, PNG, WEBP · Max 10 MB)
+                {needsBothSides
+                  ? '3. Front Side (PDF, JPG, PNG, WEBP · Max 10 MB)'
+                  : '3. Front / Bio Page File (PDF, JPG, PNG, WEBP · Max 10 MB)'}
               </label>
             </div>
 
@@ -349,7 +368,9 @@ export const KycVerificationModal: React.FC = () => {
                 <>
                   <Upload className="w-6 h-6 text-[#0F766E]" />
                   <span className="text-xs font-semibold text-slate-700">
-                    Click or drop document front scan here
+                    {needsBothSides
+                      ? 'Click or drop front of document here'
+                      : 'Click or drop document front scan here'}
                   </span>
                   <span className="text-[11px] text-slate-500">
                     PDF, JPEG, PNG, or WEBP up to 10 MB
@@ -362,42 +383,67 @@ export const KycVerificationModal: React.FC = () => {
             )}
           </div>
 
-          {/* 4. Optional Back Document Upload */}
-          <div>
-            <label className="text-xs font-semibold text-[#4A5B60] block mb-1.5">
-              4. Reverse Side (Optional: recommended for ID card or Driver License)
-            </label>
-            <label className="border border-dashed border-[#DCE5E3] hover:border-[#BCCAC8] rounded-2xl p-3 flex items-center justify-between gap-3 bg-[#F4F7F6]/40 hover:bg-[#F4F7F6] transition cursor-pointer">
-              <input
-                type="file"
-                accept="application/pdf,image/jpeg,image/png,image/webp"
-                onChange={(e) => handleFileChange(e, 'back')}
-                className="sr-only"
-              />
-              <div className="flex items-center gap-2.5">
-                <Upload className="w-4 h-4 text-slate-400" />
-                <span className="text-xs text-slate-600 font-medium">
-                  {backDoc.file ? backDoc.file.name : 'Attach document back side (optional)'}
-                </span>
-              </div>
-              {backDoc.file && (
-                <span className="text-[11px] font-semibold text-[#0A5C47]">
-                  {(backDoc.file.size / 1024).toFixed(0)} KB
-                </span>
+          {/* 4. Back Document Upload — required for DL / ID / residence permit */}
+          {needsBothSides && (
+            <div>
+              <label className="text-xs font-bold text-[#0E1B1F] block mb-1.5">
+                4. Back Side (PDF, JPG, PNG, WEBP · Max 10 MB)
+              </label>
+              <label className="border-2 border-dashed border-[#BCCAC8] hover:border-[#0A3D3F] rounded-2xl p-4 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6]/60 hover:bg-[#F4F7F6] transition cursor-pointer text-center relative min-h-[100px]">
+                <input
+                  type="file"
+                  accept="application/pdf,image/jpeg,image/png,image/webp"
+                  onChange={(e) => handleFileChange(e, 'back')}
+                  className="sr-only"
+                />
+                {backDoc.file ? (
+                  <div className="flex items-center gap-3 text-left w-full px-2">
+                    <div className="w-9 h-9 rounded-xl bg-[#0A3D3F] text-white flex items-center justify-center shrink-0">
+                      <FileCheck className="w-5 h-5 text-[#F5B942]" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-bold text-[#0E1B1F] truncate">
+                        {backDoc.file.name}
+                      </div>
+                      <div className="text-[11px] text-[#4A5B60]">
+                        {(backDoc.file.size / 1024).toFixed(0)} KB · {backDoc.file.type || 'Document'} · Back Page Ready
+                      </div>
+                    </div>
+                    <CheckCircle2 className="w-5 h-5 text-[#0A5C47] shrink-0" />
+                  </div>
+                ) : (
+                  <>
+                    <Upload className="w-6 h-6 text-[#0F766E]" />
+                    <span className="text-xs font-semibold text-slate-700">
+                      Click or drop back of document here
+                    </span>
+                    <span className="text-[11px] text-slate-500">
+                      PDF, JPEG, PNG, or WEBP up to 10 MB
+                    </span>
+                  </>
+                )}
+              </label>
+              {backDoc.error && (
+                <p className="text-[11px] text-red-600 mt-1 font-medium">{backDoc.error}</p>
               )}
-            </label>
-            {backDoc.error && (
-              <p className="text-[11px] text-red-600 mt-1 font-medium">{backDoc.error}</p>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex items-center gap-3 pt-3 border-t border-[#DCE5E3]">
             <button
               type="submit"
-              disabled={isSubmitting || isSanctioned || !frontDoc.file}
+              disabled={
+                isSubmitting ||
+                isSanctioned ||
+                !frontDoc.file ||
+                (needsBothSides && !backDoc.file)
+              }
               className={`flex-1 py-3 px-5 rounded-xl font-bold text-sm text-white transition flex items-center justify-center gap-2 shadow-xs cursor-pointer min-h-[46px] ${
-                isSubmitting || isSanctioned || !frontDoc.file
+                isSubmitting ||
+                isSanctioned ||
+                !frontDoc.file ||
+                (needsBothSides && !backDoc.file)
                   ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
                   : 'bg-[#0A3D3F] hover:bg-[#072F30]'
               }`}

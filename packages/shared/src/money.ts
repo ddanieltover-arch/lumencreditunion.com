@@ -10,6 +10,47 @@ export const SUPPORTED_CURRENCIES = ['USD', 'CAD', 'GBP', 'EUR'] as const;
 export const SupportedCurrencySchema = z.enum(SUPPORTED_CURRENCIES);
 export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
+export const CURRENCY_SYMBOLS: Record<SupportedCurrency, string> = {
+  USD: '$',
+  CAD: 'C$',
+  GBP: '£',
+  EUR: '€',
+};
+
+/** ISO countries that use EUR as local currency (subset used for home-wallet mapping). */
+const EUR_COUNTRY_CODES = new Set([
+  'AT', 'BE', 'CY', 'DE', 'EE', 'ES', 'FI', 'FR', 'GR', 'HR', 'IE', 'IT', 'LT', 'LU',
+  'LV', 'MT', 'NL', 'PT', 'SI', 'SK', 'AD', 'MC', 'SM', 'VA', 'ME', 'XK',
+]);
+
+/**
+ * Map a member's signup country to a supported ledger wallet currency.
+ * Uses the country's ISO-4217 code when it is USD/CAD/GBP/EUR; otherwise
+ * applies regional defaults (eurozone → EUR, etc.), then USD.
+ */
+export function resolveHomeCurrency(
+  countryCode?: string | null,
+  isoCurrency?: string | null,
+): SupportedCurrency {
+  const iso = (isoCurrency || '').toUpperCase();
+  if ((SUPPORTED_CURRENCIES as readonly string[]).includes(iso)) {
+    return iso as SupportedCurrency;
+  }
+  const cc = (countryCode || '').toUpperCase();
+  if (cc === 'US' || cc === 'PR' || cc === 'VI' || cc === 'GU' || cc === 'AS' || cc === 'MP') {
+    return 'USD';
+  }
+  if (cc === 'CA') return 'CAD';
+  if (cc === 'GB' || cc === 'IM' || cc === 'JE' || cc === 'GG') return 'GBP';
+  if (EUR_COUNTRY_CODES.has(cc) || iso === 'EUR') return 'EUR';
+  // Commonwealth / dollarized markets without a dedicated ledger → USD
+  return 'USD';
+}
+
+export function currencySymbol(currency: SupportedCurrency): string {
+  return CURRENCY_SYMBOLS[currency] || `${currency} `;
+}
+
 export interface Money {
   /**
    * Amount represented strictly in minor units (e.g. 1000 = $10.00 / £10.00)
@@ -86,19 +127,12 @@ export function parseMajorToMinor(input: string | number, currency: SupportedCur
 export function formatMoney(money: Money): string {
   assertValidMinorUnits(money.amountMinor);
 
-  const symbols: Record<SupportedCurrency, string> = {
-    USD: '$',
-    CAD: 'CA$',
-    GBP: '£',
-    EUR: '€',
-  };
-
   const isNegative = money.amountMinor < 0;
   const absMinor = Math.abs(money.amountMinor);
   const major = Math.floor(absMinor / 100);
   const minor = absMinor % 100;
   const formattedNumber = `${major.toLocaleString('en-US')}.${minor.toString().padStart(2, '0')}`;
-  const symbol = symbols[money.currency] || `${money.currency} `;
+  const symbol = currencySymbol(money.currency);
 
   return `${isNegative ? '-' : ''}${symbol}${formattedNumber}`;
 }

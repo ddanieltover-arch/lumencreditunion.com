@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { LumenLogo } from './LumenLogo';
 import { CountryServiceInfo } from '../types';
-import { LANDING_TEASER_MEMBER } from '../data/mockData';
+import { LANDING_PREVIEW } from '../data/mockData';
 import {
   FadeUp,
   Stagger,
@@ -379,7 +379,7 @@ export const LandingPage: React.FC = () => {
                   </span>
                 </div>
                 <CountUp
-                  value={LANDING_TEASER_MEMBER.wallets.USD}
+                  value={LANDING_PREVIEW.balanceUsd}
                   prefix="$"
                   delay={0.35}
                   duration={0.9}
@@ -444,15 +444,15 @@ export const LandingPage: React.FC = () => {
                 <div className="flex items-end justify-between">
                   <div>
                     <div className="font-mono font-semibold text-base tracking-[0.16em]">
-                      {LANDING_TEASER_MEMBER.virtualCard.cardNumber}
+                      {LANDING_PREVIEW.cardNumber}
                     </div>
                     <div className="text-[11px] font-semibold text-[#0E1B1F]/80 uppercase mt-0.5">
-                      {LANDING_TEASER_MEMBER.virtualCard.cardholderName}
+                      {LANDING_PREVIEW.cardholderName}
                     </div>
                   </div>
                   <div className="text-right">
                     <div className="text-[9px] uppercase tracking-wider text-[#0E1B1F]/60">Valid Thru</div>
-                    <div className="font-mono font-bold text-xs">{LANDING_TEASER_MEMBER.virtualCard.expiryDate}</div>
+                    <div className="font-mono font-bold text-xs">{LANDING_PREVIEW.expiryDate}</div>
                   </div>
                 </div>
               </motion.div>

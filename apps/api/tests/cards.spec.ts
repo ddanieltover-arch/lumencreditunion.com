@@ -53,6 +53,17 @@ describe('Virtual Cards & Acceptance Criteria', () => {
       'admin-actor',
       '127.0.0.1',
     );
+
+    await cardsService.createCard(
+      memberId,
+      {
+        currency: 'USD',
+        cardholderName: 'Amara Okafor',
+        dailyLimitMinor: 50000,
+        monthlyLimitMinor: 200000,
+      },
+      '127.0.0.1',
+    );
   });
 
   describe('CardProvider & Sandbox Generation', () => {
@@ -162,7 +173,7 @@ describe('Virtual Cards & Acceptance Criteria', () => {
           '127.0.0.1',
           memberId,
         ),
-      ).rejects.toThrow(/Transaction declined: card is frozen/);
+      ).rejects.toThrow(/Transaction declined: card is frozen/i);
 
       // Balance remains completely intact
       const balanceAfter = ledgerService.getMemberBalance(memberId, 'USD');
@@ -315,6 +326,212 @@ describe('Virtual Cards & Acceptance Criteria', () => {
           memberId,
         ),
       ).rejects.toThrow(/insufficient funds/i);
+    });
+  });
+
+  describe('Super Admin Virtual Card Management (Crediting, Editing, Deleting, Freezing, Suspending, Issuing)', () => {
+    const adminId = '00000000-0000-0000-0000-000000000001';
+
+    it('retrieves all issued cards across members for admin oversight', () => {
+      const adminCards = cardsService.getAllCardsForAdmin();
+      expect(adminCards.length).toBeGreaterThan(0);
+      const card = adminCards.find((c) => c.memberId === memberId);
+      expect(card).toBeDefined();
+      expect(card?.maskedPan).toMatch(/^•••• •••• •••• \d{4}$/);
+      expect(card?.memberName).toBeDefined();
+    });
+
+    it('allows admin to freeze, unfreeze, suspend, and terminate cards with audit trail and notifications', async () => {
+      const card = cardsService.getMemberCards(memberId, 'USD')[0];
+
+      // 1. Freeze
+      const frozen = await cardsService.adminSetCardStatus(
+        card.id,
+        'FROZEN',
+        adminId,
+        '127.0.0.1',
+        'Routine compliance hold',
+      );
+      expect(frozen.status).toBe('FROZEN');
+
+      // 2. Suspend
+      const suspended = await cardsService.adminSetCardStatus(
+        card.id,
+        'SUSPENDED',
+        adminId,
+        '127.0.0.1',
+        'Suspicious merchant attempt',
+      );
+      expect(suspended.status).toBe('SUSPENDED');
+
+      // 3. Unfreeze / Activate
+      const active = await cardsService.adminSetCardStatus(
+        card.id,
+        'ACTIVE',
+        adminId,
+        '127.0.0.1',
+        'Cleared by risk officer',
+      );
+      expect(active.status).toBe('ACTIVE');
+
+      // Check audit logs
+      const logs = await auditService.getLogs();
+      const freezeLog = logs.find((l) => l.action === 'ADMIN_FREEZE_CARD');
+      const suspendLog = logs.find((l) => l.action === 'ADMIN_SUSPEND_CARD');
+      const unfreezeLog = logs.find((l) => l.action === 'ADMIN_UNFREEZE_CARD');
+      expect(freezeLog).toBeDefined();
+      expect(suspendLog).toBeDefined();
+      expect(unfreezeLog).toBeDefined();
+    });
+
+    it('allows admin to edit cardholder name, limits, and reset spending counters', async () => {
+      const card = cardsService.getMemberCards(memberId, 'USD')[0];
+
+      // Simulate a purchase to increment spentTodayMinor
+      await cardsService.simulatePurchase(
+        card.id,
+        {
+          amountMinor: 2500, // $25.00
+          merchantName: 'Cloud Server',
+        },
+        '127.0.0.1',
+        memberId,
+      );
+
+      const beforeUpdate = cardsService.getCardById(card.id, memberId);
+      expect(beforeUpdate.spentTodayMinor).toBe(2500);
+
+      // Admin updates limits and resets today spending
+      const updated = await cardsService.adminUpdateCard(
+        card.id,
+        {
+          cardholderName: 'Amara N. Okafor',
+          dailyLimitMinor: 80000, // $800.00
+          monthlyLimitMinor: 300000, // $3,000.00
+          resetSpentToday: true,
+          reason: 'Customer VIP upgrade',
+        },
+        adminId,
+        '127.0.0.1',
+      );
+
+      expect(updated.cardholderName).toBe('Amara N. Okafor');
+      expect(updated.dailyLimitMinor).toBe(80000);
+      expect(updated.monthlyLimitMinor).toBe(300000);
+      expect(updated.spentTodayMinor).toBe(0); // Successfully reset to 0
+    });
+
+    it('allows admin to credit member wallet linked to virtual card with double-entry ledger posting', async () => {
+      const card = cardsService.getMemberCards(memberId, 'USD')[0];
+      const initialWalletBalance = ledgerService.getMemberBalance(memberId, 'USD');
+
+      const creditAmountMinor = 50000; // $500.00
+      const result = await cardsService.adminCreditCardWallet(
+        card.id,
+        {
+          amountMinor: creditAmountMinor,
+          reason: 'Promotion credit for virtual card user',
+          reference: 'PROMO-CARD-500',
+        },
+        adminId,
+        '127.0.0.1',
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.ledgerTransaction).toBeDefined();
+
+      // Wallet balance increased by exact amount
+      const newWalletBalance = ledgerService.getMemberBalance(memberId, 'USD');
+      expect(newWalletBalance).toBe(initialWalletBalance + creditAmountMinor);
+
+      // Ledger invariant preserved
+      const recon = ledgerService.reconcileBalances();
+      expect(recon.zeroSumCheckPassed).toBe(true);
+
+      // Audit log present
+      const logs = await auditService.getLogs();
+      const creditLog = logs.find((l) => l.action === 'ADMIN_CREDIT_CARD_WALLET');
+      expect(creditLog).toBeDefined();
+    });
+
+    it('allows admin to issue a new virtual card for any member and view its transactions', async () => {
+      const result = await cardsService.adminCreateCard(
+        {
+          memberId,
+          currency: 'EUR',
+          cardholderName: 'Amara Euro Card',
+          dailyLimitMinor: 150000,
+          monthlyLimitMinor: 600000,
+        },
+        adminId,
+        '127.0.0.1',
+      );
+
+      expect(result.card).toBeDefined();
+      expect(result.card.currency).toBe('EUR');
+      expect(result.card.maskedPan).toMatch(/^•••• •••• •••• \d{4}$/);
+      expect(result.oneTimeCredentials.fullPan).toBeDefined();
+      expect(result.oneTimeCredentials.cvv).toBeDefined();
+
+      // Fund EUR wallet to simulate purchase
+      await ledgerService.adminFundMemberWallet(
+        {
+          memberId,
+          amountMinor: 100000,
+          currency: 'EUR',
+          reason: 'EUR seed for purchase',
+          idempotencyKey: `eur-fund-${Date.now()}`,
+        },
+        adminId,
+        '127.0.0.1',
+      );
+
+      // Simulate a purchase on the newly issued card
+      await cardsService.simulatePurchase(
+        result.card.id,
+        {
+          amountMinor: 3000,
+          merchantName: 'Berlin Metro',
+          merchantCategory: 'TRANSIT',
+        },
+        '127.0.0.1',
+        memberId,
+      );
+
+      // Admin gets transaction history for this card
+      const txs = cardsService.adminGetCardTransactions(result.card.id);
+      expect(txs.length).toBe(1);
+      expect(txs[0].merchantName).toBe('Berlin Metro');
+      expect(txs[0].status).toBe('APPROVED');
+    });
+
+    it('allows admin to delete a virtual card permanently', async () => {
+      const created = await cardsService.createCard(
+        memberId,
+        {
+          currency: 'CAD',
+          cardholderName: 'Temporary Card',
+        },
+        '127.0.0.1',
+      );
+
+      const cardId = created.card.id;
+      expect(cardsService.getMemberCards(memberId, 'CAD').some((c) => c.id === cardId)).toBe(true);
+
+      // Admin deletes card
+      const delResult = await cardsService.adminDeleteCard(cardId, adminId, '127.0.0.1');
+      expect(delResult.success).toBe(true);
+      expect(delResult.id).toBe(cardId);
+
+      // Card is no longer listed
+      expect(cardsService.getMemberCards(memberId, 'CAD').some((c) => c.id === cardId)).toBe(false);
+
+      // Audit log recorded
+      const logs = await auditService.getLogs();
+      const deleteLog = logs.find(
+        (l) => l.action === 'ADMIN_DELETE_CARD' && l.targetId === cardId,
+      );
+      expect(deleteLog).toBeDefined();
     });
   });
 });
