@@ -113,6 +113,7 @@ export function createApiApp(
         rssBytes: process.memoryUsage().rss,
         heapUsedBytes: process.memoryUsage().heapUsed,
       },
+      adminSeedConfigured: Boolean(process.env.SUPER_ADMIN_PASSWORD?.trim()),
       timestamp: new Date().toISOString(),
     });
   });
@@ -124,6 +125,7 @@ export function createApiApp(
       requireSecondApprover: configService.requireSecondApprover,
       bannerNotice: 'Lumenfield Credit Union — secure member access.',
       emailDeliveryEnabled: Boolean(process.env.RESEND_API_KEY?.trim()),
+      adminSeedConfigured: Boolean(process.env.SUPER_ADMIN_PASSWORD?.trim()),
     });
   });
 

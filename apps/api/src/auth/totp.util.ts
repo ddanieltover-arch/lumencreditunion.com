@@ -13,6 +13,16 @@ export function generateBase32Secret(length = 32): string {
   return result;
 }
 
+/** Stable Base32 secret for serverless cold starts (same inputs → same secret). */
+export function deriveBase32Secret(material: string, length = 32): string {
+  const hash = crypto.createHmac('sha256', material).update('lumenfield-totp-v1').digest();
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += BASE32_CHARS[hash[i % hash.length] % 32];
+  }
+  return result;
+}
+
 export function base32Decode(base32: string): Buffer {
   const clean = base32.toUpperCase().replace(/=+$/, '');
   let bits = 0;

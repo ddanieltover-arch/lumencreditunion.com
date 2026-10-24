@@ -31,7 +31,7 @@ export const en = {
   // Authentication & Security
   auth: {
     signInTitle: 'Sign In to Lumenfield',
-    signInSubtitle: 'Enter your credentials to access your member wallet.',
+    signInSubtitle: 'Enter your credentials to access your account.',
     registerTitle: 'Create Member Account',
     email: 'Email Address',
     password: 'Password',

@@ -15,6 +15,7 @@ import {
 } from './jwt.util';
 import {
   generateBase32Secret,
+  deriveBase32Secret,
   verifyTotpCode,
   generateRecoveryCodes,
   generateTotpQrCode,
@@ -73,6 +74,8 @@ export class AuthService {
   private passwordResetTokens: Map<string, PasswordResetRecord> = new Map();
   private emailVerificationTokens: Map<string, string> = new Map(); // token -> userId
   private mfaTickets: Map<string, { userId: string; expiresAt: number }> = new Map();
+  private readonly ready: Promise<void>;
+  private bootstrapError: Error | null = null;
 
   constructor(
     private readonly auditService: AuditService = new AuditService(),
@@ -80,7 +83,27 @@ export class AuthService {
     private readonly countriesService: CountriesService = new CountriesService(),
     private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
-    void this.bootstrapUsers();
+    this.ready = this.bootstrapUsers().catch((err: unknown) => {
+      this.bootstrapError =
+        err instanceof Error
+          ? err
+          : new Error('Failed to bootstrap authentication users.');
+      console.error('[AuthService] Bootstrap failed:', this.bootstrapError.message);
+    });
+  }
+
+  /** Wait for admin seed before handling auth (avoids serverless race on cold start). */
+  async ensureReady(): Promise<void> {
+    await this.ready;
+    if (this.bootstrapError) {
+      throw new Error(
+        'Administrator account is not configured. Set SUPER_ADMIN_EMAIL and SUPER_ADMIN_PASSWORD on the server, then redeploy.',
+      );
+    }
+    if (![...this.users.values()].some((u) => u.role === 'SUPER_ADMIN')) {
+      // Retry once if seed was skipped/raced
+      await this.seedSuperAdmin();
+    }
   }
 
   private async bootstrapUsers() {
@@ -95,26 +118,40 @@ export class AuthService {
    * Seed one SUPER_ADMIN from environment variables (or secure defaults)
    */
   public async seedSuperAdmin(): Promise<UserRecord> {
-    const adminEmail =
+    const adminEmail = (
       process.env.SUPER_ADMIN_EMAIL ||
       process.env.SUPPORT_EMAIL ||
-      'support@lumenfieldcu.com';
+      'support@lumenfieldcu.com'
+    )
+      .trim()
+      .toLowerCase();
     const existing = Array.from(this.users.values()).find(
-      (u) => u.email.toLowerCase() === adminEmail.toLowerCase(),
+      (u) => u.email.toLowerCase() === adminEmail,
     );
     if (existing) {
       return existing;
     }
 
-    const adminPassword = process.env.SUPER_ADMIN_PASSWORD;
+    const adminPassword = process.env.SUPER_ADMIN_PASSWORD?.trim();
     if (!adminPassword) {
       throw new Error(
         'SUPER_ADMIN_PASSWORD must be set in the environment before seeding the super administrator.',
       );
     }
     const passwordHash = await hashPassword(adminPassword);
-    const mfaSecret = generateBase32Secret();
-    const recoveryCodes = generateRecoveryCodes(8);
+    const jwtSecret = this.configService.get('JWT_SECRET');
+    // Stable across serverless cold starts when env is unchanged
+    const mfaSecret =
+      process.env.SUPER_ADMIN_TOTP_SECRET?.trim() ||
+      deriveBase32Secret(`${jwtSecret}:admin-totp:${adminEmail}`);
+    const recoveryCodes = [
+      deriveBase32Secret(`${jwtSecret}:admin-rec:0:${adminEmail}`, 8) +
+        '-' +
+        deriveBase32Secret(`${jwtSecret}:admin-rec:1:${adminEmail}`, 8),
+      deriveBase32Secret(`${jwtSecret}:admin-rec:2:${adminEmail}`, 8) +
+        '-' +
+        deriveBase32Secret(`${jwtSecret}:admin-rec:3:${adminEmail}`, 8),
+    ];
 
     const superAdmin: UserRecord = {
       id: '00000000-0000-0000-0000-000000000001',
@@ -128,7 +165,9 @@ export class AuthService {
       emailVerified: true,
       failedLoginAttempts: 0,
       lockedUntil: null,
-      mfaEnabled: true, // HARD RULE: MFA mandatory for SUPER_ADMIN
+      // Password login works immediately; enroll TOTP from Security settings after sign-in.
+      // Login still enforces MFA once mfaEnabled is turned on.
+      mfaEnabled: false,
       mfaSecret,
       mfaRecoveryCodes: recoveryCodes,
       createdAt: new Date().toISOString(),
@@ -136,16 +175,7 @@ export class AuthService {
     };
 
     this.users.set(superAdmin.id, superAdmin);
-    console.log(`[AuthService] Seeded SUPER_ADMIN: ${adminEmail} (MFA Mandatory: Enabled)`);
-    if (!this.configService.isSandbox) {
-      const issuer = process.env.TOTP_ISSUER || 'Lumenfield';
-      console.log(
-        `[AuthService] LIVE MFA setup for ${adminEmail}\n` +
-          `  TOTP secret: ${mfaSecret}\n` +
-          `  otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(adminEmail)}?secret=${mfaSecret}&issuer=${encodeURIComponent(issuer)}\n` +
-          `  Recovery codes: ${recoveryCodes.join(', ')}`,
-      );
-    }
+    console.log(`[AuthService] Seeded SUPER_ADMIN: ${adminEmail}`);
     return superAdmin;
   }
 
@@ -199,6 +229,7 @@ export class AuthService {
     verificationToken?: string;
     message: string;
   }> {
+    await this.ensureReady();
     const validated = RegisterUserSchema.parse(input);
 
     // 1. Check if email already registered
@@ -330,6 +361,7 @@ export class AuthService {
         };
       }
   > {
+    await this.ensureReady();
     const validated = LoginUserSchema.parse(input);
     const emailLower = validated.email.toLowerCase();
 
@@ -408,9 +440,8 @@ export class AuthService {
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
 
-    // 3. Multi-Factor Authentication check
-    // If MFA is enabled OR if user is SUPER_ADMIN (where MFA is strictly mandatory)
-    const isMfaRequired = user.mfaEnabled || user.role === 'SUPER_ADMIN';
+    // 3. Multi-Factor Authentication check (after member enrolls TOTP)
+    const isMfaRequired = user.mfaEnabled;
 
     if (isMfaRequired) {
       // If code was not provided directly in login form, issue MFA Ticket
