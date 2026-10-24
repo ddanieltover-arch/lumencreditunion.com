@@ -43,8 +43,13 @@ export async function seedCountries(prismaClient?: any) {
   return ALL_COUNTRIES;
 }
 
-// When executed directly via `tsx src/seed.ts`
-if (import.meta.url === `file://${process.argv[1]}`) {
+// When executed directly via `tsx packages/db/src/seed.ts` (Node only)
+const isNode =
+  typeof process !== 'undefined' &&
+  !!process.versions?.node &&
+  Array.isArray(process.argv);
+
+if (isNode && import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}`) {
   seedCountries()
     .then(() => {
       console.log('[Seed] Complete.');
