@@ -13,24 +13,35 @@ export const ContactPage: React.FC = () => {
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSending(true);
-
-    const body = [
-      `Name: ${name.trim()}`,
-      `Email: ${email.trim()}`,
-      '',
-      message.trim(),
-    ].join('\n');
-
-    const mailto = `mailto:${SITE_CONTACT.supportEmail}?subject=${encodeURIComponent(
-      subject.trim() || 'Member support',
-    )}&body=${encodeURIComponent(body)}`;
-
-    window.location.href = mailto;
-    showToast('Opening your email app to reach Member Services.', 'info');
-    setSending(false);
+    try {
+      const res = await fetch('/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: name.trim(),
+          email: email.trim(),
+          subject: subject.trim() || 'Member support',
+          message: message.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.message || 'Unable to send your message.');
+      }
+      showToast('Message sent. Member Services will follow up by email.', 'success');
+      setName('');
+      setEmail('');
+      setSubject('Member support');
+      setMessage('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to send your message.';
+      showToast(msg, 'warning');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -154,7 +165,7 @@ export const ContactPage: React.FC = () => {
               Send a message
             </h2>
             <p className="mt-2 text-[14px] text-[#4A5B60] leading-relaxed">
-              Messages are routed to {SITE_CONTACT.supportEmail} through your email client.
+              Messages are delivered to {SITE_CONTACT.supportEmail}. You will receive a confirmation email.
             </p>
 
             <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">

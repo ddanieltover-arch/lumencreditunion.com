@@ -214,7 +214,11 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
               <button
                 key={cur}
                 type="button"
-                onClick={() => setSelectedCurrency(cur)}
+                onClick={() => {
+                  setSelectedCurrency(cur);
+                  const first = virtualCards.find((c) => c.currency === cur);
+                  if (first) setActiveCardId(first.id);
+                }}
                 className={`px-4 py-2.5 rounded-2xl text-xs font-semibold transition cursor-pointer flex items-center gap-2 ${
                   isSelected
                     ? 'bg-[#0A3D3F] text-white shadow-xs'
@@ -245,6 +249,28 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
           <span>Issue New Card ({selectedCurrency})</span>
         </button>
       </div>
+
+      {cardsInCurrency.length > 1 && (
+        <div className="flex flex-wrap gap-2 -mt-2">
+          {cardsInCurrency.map((card) => {
+            const isActive = activeCard?.id === card.id;
+            return (
+              <button
+                key={card.id}
+                type="button"
+                onClick={() => setActiveCardId(card.id)}
+                className={`px-3.5 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer min-h-[40px] ${
+                  isActive
+                    ? 'bg-[#0A3D3F] text-white border-[#0A3D3F]'
+                    : 'bg-white text-[#0E1B1F] border-[#DCE5E3] hover:bg-[#F4F7F6]'
+                }`}
+              >
+                {card.maskedPan.slice(-9)} · {card.status === 'FROZEN' ? 'Frozen' : 'Active'}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Main Grid: Card Visual + Details & Limits (Left) & Recent Transactions (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">

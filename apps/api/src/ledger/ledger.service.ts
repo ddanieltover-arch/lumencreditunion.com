@@ -15,6 +15,8 @@ import {
 import { ConfigService } from '../config/config.service';
 import { AuditService } from '../audit/audit.service';
 import type { KycService } from '../kyc/kyc.service';
+import type { AuthService } from '../auth/auth.service';
+import { EmailService } from '../email/email.service';
 
 export interface AccountRecord {
   id: string;
@@ -77,6 +79,8 @@ export class LedgerService {
     private readonly configService: ConfigService = ConfigService.getInstance(),
     private readonly auditService: AuditService = new AuditService(),
     public readonly kycService?: KycService,
+    private readonly authService?: AuthService,
+    private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
     this.initSystemAccounts();
   }
@@ -479,6 +483,28 @@ export class LedgerService {
       ipAddress,
     );
 
+    const amountFormatted = formatMoney({
+      amountMinor,
+      currency: validated.currency,
+    });
+    const member = this.authService?.getUserById(validated.memberId);
+
+    if (tx.status === 'PENDING_APPROVAL') {
+      void this.emailService.sendAdminDualApprovalPendingEmail({
+        amountFormatted,
+        reference: tx.reference,
+        memberId: validated.memberId,
+        transactionId: tx.id,
+      });
+    } else if (member?.email) {
+      void this.emailService.sendWalletFundedEmail(member.email, member.fullName, {
+        amountFormatted,
+        currency: validated.currency,
+        reference: tx.reference,
+        reason: validated.reason,
+      });
+    }
+
     return tx;
   }
 
@@ -537,6 +563,30 @@ export class LedgerService {
       afterState: { status: 'POSTED', approverId },
       ipAddress,
     });
+
+    const memberId = tx.metadata?.memberId as string | undefined;
+    const creditEntry = tx.entries.find(
+      (e) => e.accountType === 'MEMBER_WALLET' && e.direction === 'CREDIT',
+    );
+    if (memberId && creditEntry) {
+      const member = this.authService?.getUserById(memberId);
+      if (member?.email) {
+        const amountFormatted = formatMoney({
+          amountMinor: creditEntry.amountMinor,
+          currency: creditEntry.currency,
+        });
+        void this.emailService.sendDualApprovalPostedEmail(member.email, member.fullName, {
+          amountFormatted,
+          reference: tx.reference,
+        });
+        void this.emailService.sendWalletFundedEmail(member.email, member.fullName, {
+          amountFormatted,
+          currency: creditEntry.currency,
+          reference: tx.reference,
+          reason: (tx.metadata?.reason as string) || tx.description,
+        });
+      }
+    }
 
     return tx;
   }

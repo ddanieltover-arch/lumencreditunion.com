@@ -37,6 +37,7 @@ import {
   DownloadCloud,
   AlertTriangle,
   ExternalLink,
+  LogOut,
 } from 'lucide-react';
 import { VirtualCardsView } from './VirtualCardsView';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -65,25 +66,23 @@ export const MemberDashboard: React.FC = () => {
 
     memberTab,
     setMemberTab,
-    setCurrentView,
-    setAdminTab,
     activeMember,
     transactions,
     loanApplications,
     sendTransfer,
-    toggleCardFreeze,
-    updateCardLimits,
     submitLoanApplication,
     uploadKYC,
     convertCurrency,
     showToast,
     openSecurityModal,
     currentUser,
+    logoutUser,
     downloadStatement,
     exportPersonalData,
     requestAccountDeletion,
     openTermsModal,
     openPrivacyModal,
+    submitKycVerification,
   } = useApp();
 
   // Wallet activity filtering & pagination
@@ -97,8 +96,6 @@ export const MemberDashboard: React.FC = () => {
   // Modal states
   const [showSendModal, setShowSendModal] = useState<boolean>(false);
   const [showLoanModal, setShowLoanModal] = useState<boolean>(false);
-  const [showCardLimitsModal, setShowCardLimitsModal] = useState<boolean>(false);
-  const [showCardDetailsModal, setShowCardDetailsModal] = useState<boolean>(false);
   const [showDocUploadModal, setShowDocUploadModal] = useState<boolean>(false);
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [selectedLoanAppId, setSelectedLoanAppId] = useState<string | null>(null);
@@ -121,11 +118,6 @@ export const MemberDashboard: React.FC = () => {
   const [swapTo, setSwapTo] = useState<Currency>('CAD');
   const [swapAmount, setSwapAmount] = useState<string>('500');
 
-  // Card limits modal state
-  const [tempDailyLimit, setTempDailyLimit] = useState<number>(activeMember.virtualCard.dailyLimit);
-  const [tempMonthlyLimit, setTempMonthlyLimit] = useState<number>(activeMember.virtualCard.monthlyLimit);
-  const [cardRevealed, setCardRevealed] = useState<boolean>(false);
-
   // Loan Application Form State
   const [loanType, setLoanType] = useState<'auto' | 'mortgage'>('auto');
   const [loanAmount, setLoanAmount] = useState<number>(18000);
@@ -137,6 +129,13 @@ export const MemberDashboard: React.FC = () => {
   // KYC Upload form state
   const [kycType, setKycType] = useState<'passport' | 'id_card' | 'residence_permit' | 'drivers_license'>('passport');
   const [kycDocName, setKycDocName] = useState<string>('US Passport (Verified Scan)');
+  const [kycFile, setKycFile] = useState<File | null>(null);
+  const [isSubmittingKyc, setIsSubmittingKyc] = useState(false);
+
+  // External bank / rails form
+  const [bankRail, setBankRail] = useState<'ACH' | 'SEPA' | 'FASTER' | 'USDC'>('ACH');
+  const [bankAmount, setBankAmount] = useState('');
+  const [bankDestination, setBankDestination] = useState('');
 
   // Transaction filter
   const [txFilter, setTxFilter] = useState<'all' | 'completed' | 'pending'>('all');
@@ -188,14 +187,20 @@ export const MemberDashboard: React.FC = () => {
       showToast('Please enter a valid transfer amount.', 'warning');
       return;
     }
+    if (!quickTo.trim()) {
+      showToast('Enter a recipient name or member ID.', 'warning');
+      return;
+    }
     const res = sendTransfer({
-      recipient: quickTo || 'Amara O. (LF-000089)',
+      recipient: quickTo.trim(),
       amount: amt,
       currency: 'USD',
     });
     if (res.success) {
       setQuickTo('');
       setQuickAmount('');
+    } else {
+      showToast(res.message, 'warning');
     }
   };
 
@@ -205,8 +210,12 @@ export const MemberDashboard: React.FC = () => {
       showToast('Please enter a valid transfer amount.', 'warning');
       return;
     }
+    if (!sendRecipient.trim()) {
+      showToast('Enter a recipient name or member ID.', 'warning');
+      return;
+    }
     const res = sendTransfer({
-      recipient: sendRecipient,
+      recipient: sendRecipient.trim(),
       amount: amt,
       currency: sendCurrency,
     });
@@ -214,6 +223,8 @@ export const MemberDashboard: React.FC = () => {
       setShowSendModal(false);
       setSendRecipient('');
       setSendAmount('');
+    } else {
+      showToast(res.message, 'warning');
     }
   };
 
@@ -223,12 +234,14 @@ export const MemberDashboard: React.FC = () => {
       showToast('Enter valid swap amount.', 'warning');
       return;
     }
-    convertCurrency(swapFrom, swapTo, amt);
-  };
-
-  const handleSaveCardLimits = () => {
-    updateCardLimits(tempDailyLimit, tempMonthlyLimit);
-    setShowCardLimitsModal(false);
+    if (swapFrom === swapTo) {
+      showToast('Choose two different currencies to swap.', 'warning');
+      return;
+    }
+    const res = convertCurrency(swapFrom, swapTo, amt);
+    if (!res.success) {
+      showToast(res.message, 'warning');
+    }
   };
 
   const handleSubmitLoan = () => {
@@ -243,10 +256,96 @@ export const MemberDashboard: React.FC = () => {
     setShowLoanModal(false);
   };
 
-  const handleUploadKYC = () => {
-    const fileName = `${kycType}_${activeMember.id.toLowerCase()}_sample.pdf`;
-    uploadKYC(kycType, kycDocName, fileName);
-    setShowDocUploadModal(false);
+  const handleUploadKYC = async () => {
+    if (!kycFile) {
+      showToast('Select a document file to upload.', 'warning');
+      return;
+    }
+    if (!kycDocName.trim()) {
+      showToast('Enter a document title.', 'warning');
+      return;
+    }
+
+    const typeMap = {
+      passport: 'PASSPORT',
+      id_card: 'ID_CARD',
+      residence_permit: 'RESIDENCE_PERMIT',
+      drivers_license: 'DRIVERS_LICENSE',
+    } as const;
+
+    const mime =
+      kycFile.type === 'image/jpeg' ||
+      kycFile.type === 'image/png' ||
+      kycFile.type === 'image/webp' ||
+      kycFile.type === 'application/pdf'
+        ? kycFile.type
+        : null;
+    if (!mime) {
+      showToast('Upload a JPG, PNG, WebP, or PDF file.', 'warning');
+      return;
+    }
+
+    try {
+      setIsSubmittingKyc(true);
+      const fileBase64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Could not read the selected file.'));
+        reader.readAsDataURL(kycFile);
+      });
+
+      await submitKycVerification({
+        countryCode: (activeMember.countryCode || 'US').slice(0, 2).toUpperCase(),
+        documentType: typeMap[kycType],
+        documents: [
+          {
+            fileName: kycFile.name || `${kycDocName.replace(/\s+/g, '_')}.pdf`,
+            mimeType: mime,
+            fileBase64,
+            side: 'FRONT',
+          },
+        ],
+      });
+
+      setShowDocUploadModal(false);
+      setKycFile(null);
+      showToast('Identity document submitted for admin review.', 'success');
+    } catch (err: any) {
+      // Fall back to local queue if API is unavailable so the UI still responds
+      const fileName = kycFile.name || `${kycType}_${activeMember.id.toLowerCase()}.pdf`;
+      uploadKYC(kycType, kycDocName.trim(), fileName);
+      setShowDocUploadModal(false);
+      setKycFile(null);
+      if (err?.message) {
+        showToast(`${err.message} Saved locally for review.`, 'warning');
+      }
+    } finally {
+      setIsSubmittingKyc(false);
+    }
+  };
+
+  const handleExternalRailTransfer = () => {
+    const amt = parseFloat(bankAmount);
+    if (isNaN(amt) || amt <= 0) {
+      showToast('Enter a valid amount for the external transfer.', 'warning');
+      return;
+    }
+    if (!bankDestination.trim()) {
+      showToast('Enter a destination account, IBAN, or wallet address.', 'warning');
+      return;
+    }
+    const recipient = `${bankRail}: ${bankDestination.trim()}`;
+    const res = sendTransfer({
+      recipient,
+      amount: amt,
+      currency: bankRail === 'SEPA' ? 'EUR' : bankRail === 'FASTER' ? 'GBP' : 'USD',
+    });
+    if (res.success) {
+      setBankAmount('');
+      setBankDestination('');
+    } else {
+      showToast(res.message, 'warning');
+    }
   };
 
   const activeLoanApp =
@@ -433,26 +532,14 @@ export const MemberDashboard: React.FC = () => {
               </div>
             </div>
 
-            {/* Quick Link to Admin & Home */}
-            <div className="flex items-center justify-between px-1 text-xs text-[#8FA5A3]">
-              <button
-                type="button"
-                onClick={() => setCurrentView('landing')}
-                className="hover:text-white transition-colors cursor-pointer"
-              >
-                ← Back to Home
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setCurrentView('admin');
-                  setAdminTab('fund_wallet');
-                }}
-                className="text-[#F5B942] hover:underline font-semibold cursor-pointer"
-              >
-                Admin Console
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => void logoutUser()}
+              className="w-full flex items-center gap-2.5 text-xs font-semibold text-[#C9DEDC] hover:text-white hover:bg-[#0F5557]/60 p-2.5 rounded-xl border border-white/10 transition cursor-pointer min-h-[44px]"
+            >
+              <LogOut className="w-4 h-4 shrink-0" />
+              <span>Sign out</span>
+            </button>
           </div>
         </aside>
 
@@ -489,10 +576,14 @@ export const MemberDashboard: React.FC = () => {
                   <span>Identity verified</span>
                 </div>
               ) : (
-                <div className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FFF1CC] text-[#5A4100] text-xs font-semibold border border-[#F0D58A]">
+                <button
+                  type="button"
+                  onClick={() => setMemberTab('documents')}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#FFF1CC] text-[#5A4100] text-xs font-semibold border border-[#F0D58A] hover:bg-[#FFE9A8] transition cursor-pointer"
+                >
                   <Clock className="w-3.5 h-3.5" />
-                  <span>Verification pending</span>
-                </div>
+                  <span>Verification pending — upload ID</span>
+                </button>
               )}
             </div>
           </PanelSwap>
@@ -536,8 +627,19 @@ export const MemberDashboard: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => {
-                        setCurrentView('admin');
-                        setAdminTab('fund_wallet');
+                        if (!activeMember.identityVerified) {
+                          setMemberTab('documents');
+                          showToast(
+                            'Complete identity verification first. An administrator can then credit your wallet.',
+                            'info',
+                          );
+                          return;
+                        }
+                        setMemberTab('transfers');
+                        showToast(
+                          'Wallet funding is posted by an administrator after a verified deposit. Use Transfers for member-to-member moves.',
+                          'info',
+                        );
                       }}
                       className="inline-flex items-center justify-center min-h-[44px] px-4 rounded-xl border border-[#5E9A97] text-white hover:bg-white/10 font-semibold text-sm transition-all cursor-pointer"
                     >
@@ -1228,7 +1330,7 @@ export const MemberDashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* External Bank & Rails Simulator */}
+              {/* External Bank & Clearing Rails */}
               <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-5">
                 <div className="flex items-center gap-2">
                   <div className="w-10 h-10 rounded-xl bg-[#FFF1CC] flex items-center justify-center text-[#5A4100]">
@@ -1242,30 +1344,64 @@ export const MemberDashboard: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="space-y-3 text-sm">
-                  <div className="p-3.5 rounded-xl border border-[#DCE5E3] bg-[#F4F7F6] flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold text-[#0E1B1F]">ACH Direct Deposit / Debit</div>
-                      <div className="text-xs text-[#4A5B60]">Routing: 021000021 · Account: ••9401</div>
-                    </div>
-                    <span className="text-xs font-semibold text-[#0F766E] bg-[#E3F3F1] px-2 py-0.5 rounded">
-                      Linked
-                    </span>
-                  </div>
+                <div className="flex flex-wrap gap-2">
+                  {(['ACH', 'SEPA', 'FASTER', 'USDC'] as const).map((rail) => (
+                    <button
+                      key={rail}
+                      type="button"
+                      onClick={() => setBankRail(rail)}
+                      className={`px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer min-h-[40px] ${
+                        bankRail === rail
+                          ? 'bg-[#0A3D3F] text-white border-[#0A3D3F]'
+                          : 'bg-[#F4F7F6] text-[#0E1B1F] border-[#DCE5E3] hover:bg-[#E3F3F1]'
+                      }`}
+                    >
+                      {rail === 'FASTER' ? 'Faster Payments' : rail}
+                    </button>
+                  ))}
+                </div>
 
-                  <div className="p-3.5 rounded-xl border border-[#DCE5E3] bg-[#F4F7F6] flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold text-[#0E1B1F]">USDC Rail</div>
-                      <div className="text-xs text-[#4A5B60]">Crypto settlement</div>
-                    </div>
-                    <span className="text-xs font-semibold text-[#0F766E] bg-[#E3F3F1] px-2 py-0.5 rounded">
-                      Active
-                    </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-semibold text-[#4A5B60]">
+                      Destination ({bankRail === 'USDC' ? 'wallet address' : 'account / IBAN'})
+                    </label>
+                    <input
+                      type="text"
+                      value={bankDestination}
+                      onChange={(e) => setBankDestination(e.target.value)}
+                      placeholder={
+                        bankRail === 'USDC'
+                          ? '0x…'
+                          : bankRail === 'SEPA'
+                          ? 'IBAN'
+                          : 'Account number'
+                      }
+                      className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-[#4A5B60]">Amount</label>
+                    <input
+                      type="number"
+                      value={bankAmount}
+                      onChange={(e) => setBankAmount(e.target.value)}
+                      placeholder="0.00"
+                      className="w-full mt-1 p-3 border border-[#BCCAC8] rounded-xl text-sm font-mono"
+                    />
                   </div>
                 </div>
 
+                <button
+                  type="button"
+                  onClick={handleExternalRailTransfer}
+                  className="py-3.5 px-4 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-sm transition-all cursor-pointer"
+                >
+                  Initiate {bankRail === 'FASTER' ? 'Faster Payments' : bankRail} transfer
+                </button>
+
                 <div className="p-4 bg-[#FFF1CC] rounded-xl border border-[#F0D58A] text-xs text-[#5A4100] leading-relaxed">
-                  External clearing rails settle through partner accounts when configured.
+                  Debits your wallet balance and records the outbound rail transfer in activity history.
                 </div>
               </div>
             </div>
@@ -1491,7 +1627,7 @@ export const MemberDashboard: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={openSecurityModal}
+                    onClick={() => openSecurityModal('mfa')}
                     className="text-xs font-bold text-[#0A3D3F] bg-white border border-[#DCE5E3] hover:bg-[#E3F3F1] px-3.5 py-2 rounded-xl transition min-h-[44px] cursor-pointer"
                   >
                     Manage 2FA
@@ -1505,7 +1641,7 @@ export const MemberDashboard: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={openSecurityModal}
+                    onClick={() => openSecurityModal('sessions')}
                     className="text-xs font-bold text-[#0A3D3F] bg-white border border-[#DCE5E3] hover:bg-[#E3F3F1] px-3.5 py-2 rounded-xl transition min-h-[44px] cursor-pointer"
                   >
                     Device List
@@ -1519,7 +1655,7 @@ export const MemberDashboard: React.FC = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={openSecurityModal}
+                    onClick={() => openSecurityModal('password')}
                     className="text-xs font-bold text-[#0A3D3F] bg-white border border-[#DCE5E3] hover:bg-[#E3F3F1] px-3.5 py-2 rounded-xl transition min-h-[44px] cursor-pointer"
                   >
                     Update Password
@@ -1780,76 +1916,6 @@ export const MemberDashboard: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowSendModal(false)}
-                  className="px-4 py-3 rounded-xl border border-[#BCCAC8] text-sm font-semibold hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 2. CARD LIMITS MODAL */}
-      {showCardLimitsModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl max-w-md w-full p-6 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5">
-            <div className="flex items-start justify-between">
-              <h3 className="font-display font-bold text-xl text-[#0E1B1F]">
-                Configure Spending Limits
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowCardLimitsModal(false)}
-                className="p-2 rounded-lg hover:bg-slate-100 text-slate-500 cursor-pointer min-h-[44px] min-w-[44px] flex items-center justify-center"
-                aria-label="Close Spending Limits modal"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="flex flex-col gap-4">
-              <div>
-                <label className="text-xs font-semibold text-[#4A5B60]">
-                  Daily Spending Limit (${tempDailyLimit})
-                </label>
-                <input
-                  type="range"
-                  min="500"
-                  max="10000"
-                  step="250"
-                  value={tempDailyLimit}
-                  onChange={(e) => setTempDailyLimit(Number(e.target.value))}
-                  className="w-full mt-2 accent-[#0A3D3F]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-[#4A5B60]">
-                  Monthly Spending Limit (${tempMonthlyLimit})
-                </label>
-                <input
-                  type="range"
-                  min="2000"
-                  max="50000"
-                  step="1000"
-                  value={tempMonthlyLimit}
-                  onChange={(e) => setTempMonthlyLimit(Number(e.target.value))}
-                  className="w-full mt-2 accent-[#0A3D3F]"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleSaveCardLimits}
-                  className="flex-1 py-3 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-sm"
-                >
-                  Save Limits
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowCardLimitsModal(false)}
                   className="px-4 py-3 rounded-xl border border-[#BCCAC8] text-sm font-semibold hover:bg-slate-50"
                 >
                   Cancel
@@ -2191,21 +2257,35 @@ export const MemberDashboard: React.FC = () => {
                 />
               </div>
 
-              <div className="border-2 border-dashed border-[#BCCAC8] rounded-xl p-6 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6] text-center">
+              <label className="border-2 border-dashed border-[#BCCAC8] rounded-xl p-6 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6] text-center cursor-pointer hover:border-[#0A3D3F] transition">
                 <Upload className="w-7 h-7 text-[#0F766E]" />
                 <span className="text-xs font-semibold text-slate-700">
-                  Select document scan (PDF, JPG, PNG)
+                  {kycFile ? kycFile.name : 'Select document scan (PDF, JPG, PNG)'}
                 </span>
                 <span className="text-[11px] text-slate-500">Max size 25MB · Encrypted at rest</span>
-              </div>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  className="sr-only"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+                    if (file && file.size > 25 * 1024 * 1024) {
+                      showToast('File must be 25MB or smaller.', 'warning');
+                      return;
+                    }
+                    setKycFile(file);
+                  }}
+                />
+              </label>
 
               <div className="flex gap-2 pt-2">
                 <button
                   type="button"
-                  onClick={handleUploadKYC}
-                  className="flex-1 py-3 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-sm"
+                  disabled={isSubmittingKyc}
+                  onClick={() => void handleUploadKYC()}
+                  className="flex-1 py-3 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-sm disabled:opacity-60 cursor-pointer"
                 >
-                  Submit for Verification
+                  {isSubmittingKyc ? 'Submitting…' : 'Submit for Verification'}
                 </button>
                 <button
                   type="button"

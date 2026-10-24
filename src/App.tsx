@@ -24,6 +24,7 @@ const MainAppContent: React.FC = () => {
     openAuthModal,
     showToast,
     isSecurityModalOpen,
+    securityModalTab,
     closeSecurityModal,
   } = useApp();
 
@@ -91,6 +92,7 @@ const MainAppContent: React.FC = () => {
       <SecuritySettingsModal
         isOpen={isSecurityModalOpen}
         onClose={closeSecurityModal}
+        initialTab={securityModalTab}
       />
       <KycVerificationModal />
 

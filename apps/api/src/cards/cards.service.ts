@@ -16,6 +16,7 @@ import { AuditService } from '../audit/audit.service';
 import { AuthService } from '../auth/auth.service';
 import { KycService } from '../kyc/kyc.service';
 import { ConfigService } from '../config/config.service';
+import { EmailService } from '../email/email.service';
 
 interface StoredCard {
   id: string;
@@ -51,9 +52,33 @@ export class CardsService {
     private readonly kycService: KycService,
     private readonly configService: ConfigService,
     cardProvider?: CardProvider,
+    private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
     this.cardProvider = cardProvider || new SandboxCardProvider();
     this.seedInitialCards();
+  }
+
+  private memberContact(memberId: string): { email: string; fullName: string } | null {
+    const user = this.authService.findUserById(memberId);
+    if (!user?.email) return null;
+    return { email: user.email, fullName: user.fullName || 'Member' };
+  }
+
+  private notifyCardDeclined(
+    memberId: string,
+    declined: CardTransactionRecord,
+    lastFour: string,
+  ) {
+    const member = this.memberContact(memberId);
+    if (!member) return;
+    void this.emailService.sendCardPurchaseDeclinedEmail(member.email, member.fullName, {
+      amountFormatted: formatMoney({
+        amountMinor: declined.amountMinor,
+        currency: declined.currency,
+      }),
+      merchant: declined.merchantName,
+      reason: declined.declineReason || `Card •••• ${lastFour} declined`,
+    });
   }
 
   /**
@@ -229,6 +254,14 @@ export class CardsService {
       ipAddress,
     });
 
+    const member = this.memberContact(memberId);
+    if (member) {
+      void this.emailService.sendCardCreatedEmail(member.email, member.fullName, {
+        lastFour: generated.lastFour,
+        currency: input.currency,
+      });
+    }
+
     // 7. Return card with one-time credentials
     return {
       card: this.sanitizeCard(storedCard),
@@ -315,6 +348,19 @@ export class CardsService {
       ipAddress,
     });
 
+    const member = this.memberContact(memberId);
+    if (member) {
+      if (newStatus === 'FROZEN') {
+        void this.emailService.sendCardFrozenEmail(member.email, member.fullName, {
+          lastFour: card.lastFour,
+        });
+      } else if (newStatus === 'ACTIVE') {
+        void this.emailService.sendCardUnfrozenEmail(member.email, member.fullName, {
+          lastFour: card.lastFour,
+        });
+      }
+    }
+
     return this.sanitizeCard(card);
   }
 
@@ -384,6 +430,21 @@ export class CardsService {
       },
       ipAddress,
     });
+
+    const member = this.memberContact(memberId);
+    if (member) {
+      void this.emailService.sendCardLimitsUpdatedEmail(member.email, member.fullName, {
+        lastFour: card.lastFour,
+        dailyLimitFormatted: formatMoney({
+          amountMinor: input.dailyLimitMinor,
+          currency: card.currency,
+        }),
+        monthlyLimitFormatted: formatMoney({
+          amountMinor: input.monthlyLimitMinor,
+          currency: card.currency,
+        }),
+      });
+    }
 
     return this.sanitizeCard(card);
   }
@@ -464,6 +525,7 @@ export class CardsService {
         declineReason: 'Card is frozen. Transaction declined.',
       };
       this.cardTransactions.push(declinedRecord);
+      this.notifyCardDeclined(card.memberId, declinedRecord, card.lastFour);
 
       const err: any = new Error('Transaction declined: card is frozen.');
       err.statusCode = 400;
@@ -481,6 +543,7 @@ export class CardsService {
         declineReason: reason,
       };
       this.cardTransactions.push(declinedRecord);
+      this.notifyCardDeclined(card.memberId, declinedRecord, card.lastFour);
 
       const err: any = new Error(`Transaction declined: ${reason}`);
       err.statusCode = 400;
@@ -497,6 +560,7 @@ export class CardsService {
         declineReason: reason,
       };
       this.cardTransactions.push(declinedRecord);
+      this.notifyCardDeclined(card.memberId, declinedRecord, card.lastFour);
 
       const err: any = new Error(`Transaction declined: ${reason}`);
       err.statusCode = 400;
@@ -513,6 +577,7 @@ export class CardsService {
         declineReason: reason,
       };
       this.cardTransactions.push(declinedRecord);
+      this.notifyCardDeclined(card.memberId, declinedRecord, card.lastFour);
 
       const err: any = new Error(`Transaction declined: ${reason}`);
       err.statusCode = 400;
@@ -535,6 +600,7 @@ export class CardsService {
         declineReason: authResult.declineReason || 'Card provider declined transaction',
       };
       this.cardTransactions.push(declinedRecord);
+      this.notifyCardDeclined(card.memberId, declinedRecord, card.lastFour);
 
       const err: any = new Error(
         `Transaction declined by provider: ${authResult.declineReason || 'Unknown error'}`,
@@ -576,6 +642,18 @@ export class CardsService {
       message: `${formatMoney({ amountMinor: input.amountMinor, currency: card.currency })} authorized at ${input.merchantName} on virtual card •••• ${card.lastFour}.`,
       type: 'info',
     });
+
+    const member = this.memberContact(card.memberId);
+    if (member) {
+      void this.emailService.sendCardPurchaseApprovedEmail(member.email, member.fullName, {
+        amountFormatted: formatMoney({
+          amountMinor: input.amountMinor,
+          currency: card.currency,
+        }),
+        merchant: input.merchantName,
+        lastFour: card.lastFour,
+      });
+    }
 
     // 9. Audit log
     await this.auditService.log({

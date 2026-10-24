@@ -166,12 +166,195 @@ function renderOgImage() {
   return encodePng(width, height, rawData);
 }
 
+/**
+ * Email header mark matching LumenLogo.tsx:
+ * amber circle, teal arc, teal center dot — transparent background.
+ */
+function paintEmailLogoMark(rawData, width, height, markX, markY, markSize) {
+  const rowBytes = 1 + width * 4;
+  const cx = markX + markSize / 2;
+  const cy = markY + markSize / 2;
+  const rOuter = markSize / 2 - 1;
+  const rDot = markSize * (3 / 32);
+  const stroke = Math.max(2, markSize * (2.5 / 32));
+
+  for (let y = markY; y < markY + markSize; y++) {
+    for (let x = markX; x < markX + markSize; x++) {
+      const dx = x - cx + 0.5;
+      const dy = y - cy + 0.5;
+      const dist = Math.hypot(dx, dy);
+      const pOffset = y * rowBytes + 1 + x * 4;
+
+      let color = null;
+
+      // Amber filled circle
+      if (dist <= rOuter) {
+        color = AMBER;
+      }
+
+      // Teal center dot (cy offset slightly up like viewBox cy=13 of 32)
+      const dotCy = cy - markSize * (3 / 32);
+      const distDot = Math.hypot(dx, y - dotCy + 0.5);
+      if (distDot <= rDot) {
+        color = BG;
+      }
+
+      // Teal arc: approximate path M6,22 C11,12 21,12 26,22 in 32x32 space
+      if (dist <= rOuter) {
+        const nx = (x - markX) / markSize;
+        const ny = (y - markY) / markSize;
+        // Parametric-ish arc band around y ≈ 0.55–0.72, x 0.2–0.8
+        const arcY = 0.375 + 0.35 * Math.pow(2 * (nx - 0.5), 2); // parabola opening down from top
+        const arcCenterY = 0.55 + 0.2 * Math.pow(2 * (nx - 0.5), 2);
+        const withinX = nx >= 0.18 && nx <= 0.82;
+        const distArc = Math.abs(ny - arcCenterY);
+        if (withinX && distArc <= stroke / markSize / 1.2 && ny > 0.42) {
+          color = BG;
+        }
+        void arcY;
+      }
+
+      if (color) {
+        rawData[pOffset] = color[0];
+        rawData[pOffset + 1] = color[1];
+        rawData[pOffset + 2] = color[2];
+        rawData[pOffset + 3] = color[3];
+      }
+    }
+  }
+}
+
+/** Horizontal email lockup: mark + wordmark-friendly teal bar (PNG for email clients). */
+function renderEmailLogo() {
+  const width = 480;
+  const height = 96;
+  const rowBytes = 1 + width * 4;
+  const rawData = Buffer.alloc(height * rowBytes);
+
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * rowBytes;
+    rawData[rowOffset] = 0;
+    for (let x = 0; x < width; x++) {
+      const pOffset = rowOffset + 1 + x * 4;
+      // Transparent background
+      rawData[pOffset] = 0;
+      rawData[pOffset + 1] = 0;
+      rawData[pOffset + 2] = 0;
+      rawData[pOffset + 3] = 0;
+    }
+  }
+
+  const markSize = 80;
+  const markX = 8;
+  const markY = Math.floor((height - markSize) / 2);
+  paintEmailLogoMark(rawData, width, height, markX, markY, markSize);
+
+  // Simple “LUMENFIELD” block letters to the right of the mark (pixel font)
+  const textStartX = markX + markSize + 16;
+  const textBaseline = Math.floor(height / 2) - 10;
+  const letterW = 10;
+  const letterH = 14;
+  const gap = 4;
+  const glyphs = {
+    L: [[0, 0, 3, 14], [0, 11, 10, 3]],
+    U: [[0, 0, 3, 11], [7, 0, 3, 11], [0, 11, 10, 3]],
+    M: [[0, 0, 3, 14], [7, 0, 3, 14], [2, 0, 3, 5], [5, 0, 3, 5]],
+    E: [[0, 0, 3, 14], [0, 0, 10, 3], [0, 5.5, 8, 3], [0, 11, 10, 3]],
+    N: [[0, 0, 3, 14], [7, 0, 3, 14], [2, 2, 3, 5], [5, 7, 3, 5]],
+    F: [[0, 0, 3, 14], [0, 0, 10, 3], [0, 5.5, 8, 3]],
+    I: [[3.5, 0, 3, 14]],
+    D: [[0, 0, 3, 14], [0, 0, 7, 3], [0, 11, 7, 3], [6, 2, 3, 10]],
+  };
+  const word = 'LUMENFIELD';
+  word.split('').forEach((ch, i) => {
+    const rects = glyphs[ch] || [];
+    const ox = textStartX + i * (letterW + gap);
+    for (const [rx, ry, rw, rh] of rects) {
+      const x0 = Math.floor(ox + rx);
+      const y0 = Math.floor(textBaseline + ry);
+      const x1 = Math.ceil(ox + rx + rw);
+      const y1 = Math.ceil(textBaseline + ry + rh);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          if (x < 0 || y < 0 || x >= width || y >= height) continue;
+          const pOffset = y * rowBytes + 1 + x * 4;
+          rawData[pOffset] = BG[0];
+          rawData[pOffset + 1] = BG[1];
+          rawData[pOffset + 2] = BG[2];
+          rawData[pOffset + 3] = BG[3];
+        }
+      }
+    }
+  });
+
+  // Sub-label
+  const sub = 'CREDIT UNION';
+  const subY = textBaseline + letterH + 8;
+  const subLetterW = 6;
+  const subGap = 2;
+  const subGlyphs = {
+    C: [[0, 0, 2, 8], [0, 0, 6, 2], [0, 6, 6, 2]],
+    R: [[0, 0, 2, 8], [0, 0, 5, 2], [0, 3, 5, 2], [4, 2, 2, 2], [3, 5, 3, 3]],
+    E: [[0, 0, 2, 8], [0, 0, 6, 2], [0, 3, 5, 2], [0, 6, 6, 2]],
+    D: [[0, 0, 2, 8], [0, 0, 4, 2], [0, 6, 4, 2], [4, 1, 2, 6]],
+    I: [[2, 0, 2, 8]],
+    T: [[0, 0, 6, 2], [2, 0, 2, 8]],
+    ' ': [],
+    U: [[0, 0, 2, 6], [4, 0, 2, 6], [0, 6, 6, 2]],
+    N: [[0, 0, 2, 8], [4, 0, 2, 8], [1, 2, 2, 3], [3, 3, 2, 3]],
+    O: [[0, 0, 2, 8], [4, 0, 2, 8], [0, 0, 6, 2], [0, 6, 6, 2]],
+  };
+  sub.split('').forEach((ch, i) => {
+    const rects = subGlyphs[ch] || [];
+    const ox = textStartX + i * (subLetterW + subGap);
+    for (const [rx, ry, rw, rh] of rects) {
+      const x0 = Math.floor(ox + rx);
+      const y0 = Math.floor(subY + ry);
+      const x1 = Math.ceil(ox + rx + rw);
+      const y1 = Math.ceil(subY + ry + rh);
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          if (x < 0 || y < 0 || x >= width || y >= height) continue;
+          const pOffset = y * rowBytes + 1 + x * 4;
+          rawData[pOffset] = MID_TEAL[0];
+          rawData[pOffset + 1] = MID_TEAL[1];
+          rawData[pOffset + 2] = MID_TEAL[2];
+          rawData[pOffset + 3] = MID_TEAL[3];
+        }
+      }
+    }
+  });
+
+  return encodePng(width, height, rawData);
+}
+
+/** Square mark-only for compact email clients / favicon-style headers */
+function renderEmailMark() {
+  const size = 128;
+  const rowBytes = 1 + size * 4;
+  const rawData = Buffer.alloc(size * rowBytes);
+  for (let y = 0; y < size; y++) {
+    rawData[y * rowBytes] = 0;
+    for (let x = 0; x < size; x++) {
+      const pOffset = y * rowBytes + 1 + x * 4;
+      rawData[pOffset] = 0;
+      rawData[pOffset + 1] = 0;
+      rawData[pOffset + 2] = 0;
+      rawData[pOffset + 3] = 0;
+    }
+  }
+  paintEmailLogoMark(rawData, size, size, 0, 0, size);
+  return encodePng(size, size, rawData);
+}
+
 // Write files
 const icon192 = renderLumenfieldIcon(192);
 const icon512 = renderLumenfieldIcon(512);
 const iconMaskable = renderLumenfieldIcon(512, true);
 const appleTouch = renderLumenfieldIcon(180);
 const ogImage = renderOgImage();
+const emailLogo = renderEmailLogo();
+const emailMark = renderEmailMark();
 
 fs.writeFileSync('public/icon-192.png', icon192);
 fs.writeFileSync('public/icon-512.png', icon512);
@@ -179,4 +362,10 @@ fs.writeFileSync('public/icon-maskable.png', iconMaskable);
 fs.writeFileSync('public/apple-touch-icon.png', appleTouch);
 fs.writeFileSync('public/og-image.png', ogImage);
 
-console.log('PWA icon assets created successfully: 192x192, 512x512, maskable, apple-touch-icon, og-image 1200x630.');
+fs.mkdirSync('public/email', { recursive: true });
+fs.writeFileSync('public/email/lumenfield-logo.png', emailLogo);
+fs.writeFileSync('public/email/lumenfield-mark.png', emailMark);
+
+console.log(
+  'PWA icon assets created successfully: 192x192, 512x512, maskable, apple-touch-icon, og-image 1200x630, email logo + mark.',
+);

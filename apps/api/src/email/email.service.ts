@@ -1,8 +1,18 @@
 /**
  * Transactional email via Resend (live mode).
  * Falls back to console logging when RESEND_API_KEY is unset (local/dev).
+ * Email failures are logged and never throw to callers of safe* helpers.
  */
 import { Resend } from 'resend';
+import * as authTpl from './templates/auth';
+import * as kycTpl from './templates/kyc';
+import * as walletTpl from './templates/wallet';
+import * as transfersTpl from './templates/transfers';
+import * as cardsTpl from './templates/cards';
+import * as loansTpl from './templates/loans';
+import * as contactTpl from './templates/contact';
+import * as adminTpl from './templates/admin';
+import type { RenderedEmail } from './types';
 
 export class EmailService {
   private static instance: EmailService;
@@ -10,18 +20,22 @@ export class EmailService {
   private readonly from: string;
   private readonly replyTo: string | undefined;
   private readonly appUrl: string;
+  readonly supportEmail: string;
+  readonly adminNotifyEmail: string;
 
   constructor() {
     const apiKey = process.env.RESEND_API_KEY?.trim();
     this.resend = apiKey ? new Resend(apiKey) : null;
-    const supportEmail =
+    this.supportEmail =
       process.env.SUPPORT_EMAIL?.trim() ||
       process.env.RESEND_REPLY_TO?.trim() ||
       'support@lumenfieldcu.com';
+    this.adminNotifyEmail =
+      process.env.SUPER_ADMIN_EMAIL?.trim() || this.supportEmail;
     this.from =
       process.env.RESEND_FROM_EMAIL?.trim() ||
-      `Lumenfield Credit Union <${supportEmail}>`;
-    this.replyTo = process.env.RESEND_REPLY_TO?.trim() || supportEmail;
+      `Lumenfield Credit Union <${this.supportEmail}>`;
+    this.replyTo = process.env.RESEND_REPLY_TO?.trim() || this.supportEmail;
     this.appUrl = (
       process.env.APP_URL ||
       'https://www.lumenfieldcu.com'
@@ -39,11 +53,24 @@ export class EmailService {
     return this.resend !== null;
   }
 
+  private base(fullName: string) {
+    return {
+      appUrl: this.appUrl,
+      supportEmail: this.supportEmail,
+      fullName,
+    };
+  }
+
+  private adminBase() {
+    return { appUrl: this.appUrl, supportEmail: this.supportEmail };
+  }
+
   private async send(params: {
     to: string;
     subject: string;
     html: string;
     text: string;
+    replyToOverride?: string;
   }): Promise<{ id?: string; mocked: boolean }> {
     if (!this.resend) {
       console.warn(
@@ -58,7 +85,9 @@ export class EmailService {
       subject: params.subject,
       html: params.html,
       text: params.text,
-      ...(this.replyTo ? { replyTo: this.replyTo } : {}),
+      ...(params.replyToOverride || this.replyTo
+        ? { replyTo: params.replyToOverride || this.replyTo }
+        : {}),
     });
 
     if (error) {
@@ -69,53 +98,518 @@ export class EmailService {
     return { id: data?.id, mocked: false };
   }
 
+  /** Deliver a rendered template; swallow errors so domain flows never fail. */
+  async deliver(
+    to: string,
+    rendered: RenderedEmail,
+    replyToOverride?: string,
+  ): Promise<{ id?: string; mocked: boolean; ok: boolean }> {
+    try {
+      const result = await this.send({
+        to,
+        subject: rendered.subject,
+        html: rendered.html,
+        text: rendered.text,
+        replyToOverride,
+      });
+      return { ...result, ok: true };
+    } catch (err) {
+      console.error('[EmailService] deliver failed:', err);
+      return { mocked: false, ok: false };
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auth
+  // ---------------------------------------------------------------------------
   async sendVerificationEmail(to: string, fullName: string, token: string) {
-    const verifyUrl = `${this.appUrl}/?verifyEmail=${encodeURIComponent(token)}`;
-    const subject = 'Verify your Lumenfield Credit Union email';
-    const text = `Hi ${fullName},\n\nConfirm your email to activate your account:\n${verifyUrl}\n\nThis link expires in 24 hours.\n\n— Lumenfield Credit Union`;
-    const html = `
-      <div style="font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;color:#0E1B1F">
-        <h2 style="color:#0A3D3F;margin-bottom:8px">Verify your email</h2>
-        <p style="line-height:1.55">Hi ${escapeHtml(fullName)},</p>
-        <p style="line-height:1.55">Confirm your email address to activate your Lumenfield Credit Union account.</p>
-        <p style="margin:28px 0">
-          <a href="${verifyUrl}" style="background:#0A3D3F;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;display:inline-block">
-            Verify email
-          </a>
-        </p>
-        <p style="font-size:13px;color:#4A5B60;line-height:1.5">Or open this link:<br/><a href="${verifyUrl}" style="color:#0A3D3F">${verifyUrl}</a></p>
-        <p style="font-size:12px;color:#8FA5A3">If you did not create this account, you can ignore this email.</p>
-      </div>
-    `;
-    return this.send({ to, subject, html, text });
+    return this.deliver(to, authTpl.verificationEmail(this.base(fullName), token));
+  }
+
+  async sendWelcomeEmail(to: string, fullName: string) {
+    return this.deliver(to, authTpl.welcomeEmail(this.base(fullName)));
   }
 
   async sendPasswordResetEmail(to: string, fullName: string, token: string) {
-    const resetUrl = `${this.appUrl}/?resetToken=${encodeURIComponent(token)}`;
-    const subject = 'Reset your Lumenfield Credit Union password';
-    const text = `Hi ${fullName},\n\nReset your password using this link (valid 1 hour):\n${resetUrl}\n\nIf you did not request this, ignore this email.\n\n— Lumenfield Credit Union`;
-    const html = `
-      <div style="font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;max-width:520px;margin:0 auto;color:#0E1B1F">
-        <h2 style="color:#0A3D3F;margin-bottom:8px">Password reset</h2>
-        <p style="line-height:1.55">Hi ${escapeHtml(fullName)},</p>
-        <p style="line-height:1.55">We received a request to reset your password. This link expires in 1 hour.</p>
-        <p style="margin:28px 0">
-          <a href="${resetUrl}" style="background:#0A3D3F;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600;display:inline-block">
-            Reset password
-          </a>
-        </p>
-        <p style="font-size:13px;color:#4A5B60;line-height:1.5">Or open this link:<br/><a href="${resetUrl}" style="color:#0A3D3F">${resetUrl}</a></p>
-        <p style="font-size:12px;color:#8FA5A3">If you did not request a reset, no action is needed.</p>
-      </div>
-    `;
-    return this.send({ to, subject, html, text });
+    return this.deliver(
+      to,
+      authTpl.passwordResetRequestEmail(this.base(fullName), token),
+    );
   }
-}
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  async sendPasswordResetConfirmedEmail(to: string, fullName: string) {
+    return this.deliver(to, authTpl.passwordResetConfirmedEmail(this.base(fullName)));
+  }
+
+  async sendPasswordChangedEmail(to: string, fullName: string) {
+    return this.deliver(to, authTpl.passwordChangedEmail(this.base(fullName)));
+  }
+
+  async sendAccountLockedEmail(
+    to: string,
+    fullName: string,
+    minutesLocked: number,
+  ) {
+    return this.deliver(
+      to,
+      authTpl.accountLockedEmail(this.base(fullName), minutesLocked),
+    );
+  }
+
+  async sendNewLoginEmail(
+    to: string,
+    fullName: string,
+    details: { deviceInfo: string; ipAddress: string; when: string },
+  ) {
+    return this.deliver(to, authTpl.newLoginEmail(this.base(fullName), details));
+  }
+
+  async sendSessionRevokedEmail(to: string, fullName: string, reason: string) {
+    return this.deliver(
+      to,
+      authTpl.sessionRevokedEmail(this.base(fullName), reason),
+    );
+  }
+
+  async sendMfaEnabledEmail(to: string, fullName: string) {
+    return this.deliver(to, authTpl.mfaEnabledEmail(this.base(fullName)));
+  }
+
+  async sendMfaDisabledEmail(to: string, fullName: string) {
+    return this.deliver(to, authTpl.mfaDisabledEmail(this.base(fullName)));
+  }
+
+  async sendAccountDeletionScheduledEmail(
+    to: string,
+    fullName: string,
+    purgeDateIso: string,
+  ) {
+    return this.deliver(
+      to,
+      authTpl.accountDeletionScheduledEmail(this.base(fullName), purgeDateIso),
+    );
+  }
+
+  async sendDataExportReadyEmail(to: string, fullName: string) {
+    return this.deliver(to, authTpl.dataExportReadyEmail(this.base(fullName)));
+  }
+
+  // ---------------------------------------------------------------------------
+  // KYC
+  // ---------------------------------------------------------------------------
+  async sendKycSubmittedEmail(to: string, fullName: string, documentType: string) {
+    return this.deliver(
+      to,
+      kycTpl.kycSubmittedEmail(this.base(fullName), documentType),
+    );
+  }
+
+  async sendKycApprovedEmail(to: string, fullName: string) {
+    return this.deliver(to, kycTpl.kycApprovedEmail(this.base(fullName)));
+  }
+
+  async sendKycRejectedEmail(to: string, fullName: string, reason: string) {
+    return this.deliver(
+      to,
+      kycTpl.kycRejectedEmail(this.base(fullName), reason),
+    );
+  }
+
+  async sendKycNeedsMoreInfoEmail(to: string, fullName: string, reason: string) {
+    return this.deliver(
+      to,
+      kycTpl.kycNeedsMoreInfoEmail(this.base(fullName), reason),
+    );
+  }
+
+  async sendAdminNewKycEmail(details: {
+    memberName: string;
+    memberEmail: string;
+    documentType: string;
+    submissionId: string;
+  }) {
+    return this.deliver(
+      this.adminNotifyEmail,
+      adminTpl.adminNewKycEmail(this.adminBase(), details),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Wallet
+  // ---------------------------------------------------------------------------
+  async sendWalletFundedEmail(
+    to: string,
+    fullName: string,
+    details: {
+      amountFormatted: string;
+      currency: string;
+      reference: string;
+      reason?: string;
+    },
+  ) {
+    return this.deliver(
+      to,
+      walletTpl.walletFundedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendDualApprovalPostedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; reference: string },
+  ) {
+    return this.deliver(
+      to,
+      walletTpl.dualApprovalPostedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendAdminDualApprovalPendingEmail(details: {
+    amountFormatted: string;
+    reference: string;
+    memberId: string;
+    transactionId: string;
+  }) {
+    return this.deliver(
+      this.adminNotifyEmail,
+      adminTpl.adminDualApprovalPendingEmail(this.adminBase(), details),
+    );
+  }
+
+  async sendCurrencySwapEmail(
+    to: string,
+    fullName: string,
+    details: {
+      fromAmount: string;
+      toAmount: string;
+      fromCurrency: string;
+      toCurrency: string;
+    },
+  ) {
+    return this.deliver(
+      to,
+      walletTpl.currencySwapEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendStatementReadyEmail(to: string, fullName: string, currency?: string) {
+    return this.deliver(
+      to,
+      walletTpl.statementReadyEmail(this.base(fullName), currency),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Transfers
+  // ---------------------------------------------------------------------------
+  async sendTransferSentEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; recipient: string; reference: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.transferSentEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendTransferReceivedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; sender: string; reference: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.transferReceivedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendBeneficiaryAddedEmail(
+    to: string,
+    fullName: string,
+    details: { name: string; countryCode: string; coolingHours: number },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.beneficiaryAddedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendBeneficiaryReadyEmail(
+    to: string,
+    fullName: string,
+    details: { name: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.beneficiaryReadyEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendBankTransferInitiatedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; beneficiary: string; reference: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.bankTransferInitiatedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendBankTransferClearedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; reference: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.bankTransferClearedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendBankTransferFailedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; reference: string; reason: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.bankTransferFailedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendTransferFlaggedMemberEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; reference: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.transferFlaggedMemberEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendTransferFlagClearedEmail(
+    to: string,
+    fullName: string,
+    details: { reference: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.transferFlagClearedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendTransferFlagRejectedEmail(
+    to: string,
+    fullName: string,
+    details: { reference: string; reason: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.transferFlagRejectedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendAdminFlaggedTransferEmail(details: {
+    amountFormatted: string;
+    reference: string;
+    flags: string;
+    transferId: string;
+  }) {
+    return this.deliver(
+      this.adminNotifyEmail,
+      adminTpl.adminFlaggedTransferEmail(this.adminBase(), details),
+    );
+  }
+
+  async sendCryptoDepositEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; network: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.cryptoDepositEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendCryptoWithdrawalEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; network: string; txHashShort: string },
+  ) {
+    return this.deliver(
+      to,
+      transfersTpl.cryptoWithdrawalEmail(this.base(fullName), details),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cards
+  // ---------------------------------------------------------------------------
+  async sendCardCreatedEmail(
+    to: string,
+    fullName: string,
+    details: { lastFour: string; currency: string },
+  ) {
+    return this.deliver(
+      to,
+      cardsTpl.cardCreatedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendCardFrozenEmail(
+    to: string,
+    fullName: string,
+    details: { lastFour: string },
+  ) {
+    return this.deliver(
+      to,
+      cardsTpl.cardFrozenEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendCardUnfrozenEmail(
+    to: string,
+    fullName: string,
+    details: { lastFour: string },
+  ) {
+    return this.deliver(
+      to,
+      cardsTpl.cardUnfrozenEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendCardLimitsUpdatedEmail(
+    to: string,
+    fullName: string,
+    details: {
+      lastFour: string;
+      dailyLimitFormatted: string;
+      monthlyLimitFormatted: string;
+    },
+  ) {
+    return this.deliver(
+      to,
+      cardsTpl.cardLimitsUpdatedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendCardPurchaseApprovedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; merchant: string; lastFour: string },
+  ) {
+    return this.deliver(
+      to,
+      cardsTpl.cardPurchaseApprovedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendCardPurchaseDeclinedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; merchant: string; reason: string },
+  ) {
+    return this.deliver(
+      to,
+      cardsTpl.cardPurchaseDeclinedEmail(this.base(fullName), details),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Loans
+  // ---------------------------------------------------------------------------
+  async sendLoanSubmittedEmail(
+    to: string,
+    fullName: string,
+    details: { loanType: string; amountFormatted: string; termMonths: number },
+  ) {
+    return this.deliver(
+      to,
+      loansTpl.loanSubmittedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendLoanUnderReviewEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string },
+  ) {
+    return this.deliver(
+      to,
+      loansTpl.loanUnderReviewEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendLoanApprovedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string },
+  ) {
+    return this.deliver(
+      to,
+      loansTpl.loanApprovedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendLoanRejectedEmail(
+    to: string,
+    fullName: string,
+    details: { amountFormatted: string; reason?: string },
+  ) {
+    return this.deliver(
+      to,
+      loansTpl.loanRejectedEmail(this.base(fullName), details),
+    );
+  }
+
+  async sendAdminNewLoanEmail(details: {
+    memberName: string;
+    loanType: string;
+    amountFormatted: string;
+    loanId: string;
+  }) {
+    return this.deliver(
+      this.adminNotifyEmail,
+      adminTpl.adminNewLoanEmail(this.adminBase(), details),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contact
+  // ---------------------------------------------------------------------------
+  async sendContactConfirmationEmail(params: {
+    visitorName: string;
+    visitorEmail: string;
+    subject: string;
+  }) {
+    return this.deliver(
+      params.visitorEmail,
+      contactTpl.contactConfirmationEmail({
+        appUrl: this.appUrl,
+        supportEmail: this.supportEmail,
+        ...params,
+      }),
+    );
+  }
+
+  async sendContactSupportInboxEmail(params: {
+    visitorName: string;
+    visitorEmail: string;
+    subject: string;
+    message: string;
+  }) {
+    return this.deliver(
+      this.supportEmail,
+      contactTpl.contactSupportInboxEmail({
+        appUrl: this.appUrl,
+        supportEmail: this.supportEmail,
+        ...params,
+      }),
+      params.visitorEmail,
+    );
+  }
 }

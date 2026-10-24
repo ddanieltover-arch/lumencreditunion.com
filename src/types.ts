@@ -146,7 +146,8 @@ export interface CountryServiceInfo {
   id?: string;
   name: string;
   code: string;
-  currency: Currency;
+  /** ISO 4217 local currency for the jurisdiction (not limited to wallet currencies). */
+  currency: string;
   currencySymbol: string;
   acceptedDocs?: string[];
   acceptedIdTypes?: string[];

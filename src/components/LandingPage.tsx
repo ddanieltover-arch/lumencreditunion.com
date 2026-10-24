@@ -44,6 +44,8 @@ const NAV_LINKS = [
   { href: '/contact', label: 'Contact', kind: 'route' as const },
 ] as const;
 
+const FEATURED_MARKET_CODES = new Set(['US', 'CA', 'GB', 'DE', 'FR', 'NL', 'ES', 'IT', 'IE']);
+
 export const LandingPage: React.FC = () => {
   const {
     countries,
@@ -61,6 +63,10 @@ export const LandingPage: React.FC = () => {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const prefersReducedMotion = usePrefersReducedMotion();
+
+  /** Featured markets for the public “where we serve” section; registration offers the full country list. */
+  const featuredCountries = countries.filter((c) => FEATURED_MARKET_CODES.has(c.code));
+  const servedCountryCount = countries.filter((c) => c.enabled !== false && !c.isSanctioned).length;
 
   const handleOpenAccount = () => {
     openAuthModal('login');
@@ -683,16 +689,16 @@ export const LandingPage: React.FC = () => {
               WHERE WE SERVE
             </span>
             <h2 className="font-display font-bold text-3xl sm:text-4xl text-[#0E1B1F] tracking-[-0.02em]">
-              Starting in North America and Europe
+              Members welcome from {servedCountryCount} countries
             </h2>
             <p className="text-[17px] text-[#4A5B60] leading-relaxed">
-              Each country has its own currency, accepted ID documents and loan rules. Click any jurisdiction to review verification requirements.
+              Full product coverage starts in these markets. Registration accepts every eligible country of residence with its local currency.
             </p>
           </FadeUp>
 
           <Stagger className="flex-1 flex flex-wrap gap-2.5" stagger={MOTION.stagger.tight}>
-            {countries.map((c) => (
-              <StaggerItem key={c.id}>
+            {featuredCountries.map((c) => (
+              <StaggerItem key={c.id || c.code}>
                 <button
                   type="button"
                   onClick={() => setSelectedCountry(c)}

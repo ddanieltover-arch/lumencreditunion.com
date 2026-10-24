@@ -65,6 +65,10 @@ interface AppContextType {
   recentFunding: FundingRecord[];
   auditLog: AuditLogEntry[];
   countries: CountryServiceInfo[];
+  updateCountryFlags: (
+    code: string,
+    patch: Partial<Pick<CountryServiceInfo, 'autoLoansEnabled' | 'mortgageEnabled' | 'cardsEnabled'>>,
+  ) => void;
 
   toasts: ToastInfo[];
   showToast: (message: string, type?: 'success' | 'info' | 'warning') => void;
@@ -181,7 +185,8 @@ interface AppContextType {
   openAuthModal: (mode?: 'login' | 'register' | 'forgot' | 'reset', resetToken?: string) => void;
   closeAuthModal: () => void;
   isSecurityModalOpen: boolean;
-  openSecurityModal: () => void;
+  securityModalTab: 'mfa' | 'password' | 'sessions' | 'token_rotation';
+  openSecurityModal: (tab?: 'mfa' | 'password' | 'sessions' | 'token_rotation') => void;
   closeSecurityModal: () => void;
   loginUser: (params: { email: string; password: string; totpCode?: string }) => Promise<any>;
   completeMfaLogin: (params: { mfaTicket: string; totpCode: string }) => Promise<any>;
@@ -242,7 +247,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const [memberTab, setMemberTab] = useState<MemberTab>('overview');
-  const [adminTab, setAdminTab] = useState<AdminTab>('fund_wallet');
+  const [adminTab, setAdminTab] = useState<AdminTab>('members');
 
   const [members, setMembers] = useState<MemberProfile[]>(INITIAL_MEMBERS);
   const [activeMemberId, setActiveMemberId] = useState<string>('');
@@ -367,6 +372,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'forgot' | 'reset'>('login');
   const [authResetToken, setAuthResetToken] = useState('');
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
+  const [securityModalTab, setSecurityModalTab] = useState<
+    'mfa' | 'password' | 'sessions' | 'token_rotation'
+  >('mfa');
 
   // KYC Verification State (HARD RULE 7 & Task Requirements)
   const [kycSubmission, setKycSubmission] = useState<KycSubmission | null>(null);
@@ -436,6 +444,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
                 ensureMemberForUser(meData.user);
               }
               if (meData.user?.role === 'SUPER_ADMIN') {
+                setAdminTab('members');
                 setCurrentView('admin');
               } else {
                 setCurrentView('member');
@@ -472,7 +481,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAuthResetToken('');
   };
 
-  const openSecurityModal = () => setIsSecurityModalOpen(true);
+  const openSecurityModal = (tab: 'mfa' | 'password' | 'sessions' | 'token_rotation' = 'mfa') => {
+    setSecurityModalTab(tab);
+    setIsSecurityModalOpen(true);
+  };
   const closeSecurityModal = () => setIsSecurityModalOpen(false);
 
   const loginUser = async (params: { email: string; password: string; totpCode?: string }) => {
@@ -494,6 +506,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(data.user);
     ensureMemberForUser(data.user);
     if (data.user.role === 'SUPER_ADMIN') {
+      setAdminTab('members');
       setCurrentView('admin');
     } else {
       setCurrentView('member');
@@ -517,6 +530,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentUser(data.user);
     ensureMemberForUser(data.user);
     if (data.user.role === 'SUPER_ADMIN') {
+      setAdminTab('members');
       setCurrentView('admin');
     } else {
       setCurrentView('member');
@@ -567,6 +581,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentUser(data.user);
       ensureMemberForUser(data.user);
       if (data.user.role === 'SUPER_ADMIN') {
+        setAdminTab('members');
         setCurrentView('admin');
       } else {
         setCurrentView('member');
@@ -1308,6 +1323,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setLoanApplications((prev) => [newApp, ...prev]);
 
+    if (authToken) {
+      fetch('/loans/apply', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          type,
+          amount,
+          termMonths,
+          purpose,
+          assetDetails,
+          downPayment,
+        }),
+      }).catch((e) => console.error('Loan apply sync:', e));
+    }
+
     logAudit(
       'LOAN_APPLICATION_SUBMITTED',
       `${type.toUpperCase()} Loan ($${amount.toLocaleString()})`,
@@ -1404,6 +1437,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         status === 'approved' ? 'APPROVED' : 'REJECTED',
         `${curSymbol}${app.requestedAmount.toLocaleString()}`
       ).catch(() => {});
+
+      if (authToken && app) {
+        fetch(`/admin/loans/${loanId}/decision`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            decision: status === 'approved' ? 'APPROVE' : 'REJECT',
+            memberId: app.memberId,
+            memberName: app.memberName,
+            memberEmail: members.find((m) => m.id === app.memberId)?.email,
+            requestedAmount: app.requestedAmount,
+            type: app.type,
+            termMonths: app.termMonths,
+            currency: app.currency,
+            purpose: app.purpose,
+          }),
+        }).catch((e) => console.error('Loan decision sync:', e));
+      }
     }
 
     showToast(`Loan application #${loanId} updated to ${status}.`, 'info');
@@ -1672,6 +1726,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Convert Currency
+  const updateCountryFlags = (
+    code: string,
+    patch: Partial<Pick<CountryServiceInfo, 'autoLoansEnabled' | 'mortgageEnabled' | 'cardsEnabled'>>,
+  ) => {
+    if (currentUser?.role !== 'SUPER_ADMIN') {
+      showToast('Only administrators can change jurisdiction product rules.', 'warning');
+      return;
+    }
+    setCountries((prev) =>
+      prev.map((c) => (c.code === code || c.id === code ? { ...c, ...patch } : c)),
+    );
+    const label = Object.entries(patch)
+      .map(([k, v]) => `${k}=${v ? 'on' : 'off'}`)
+      .join(', ');
+    logAudit(
+      'COUNTRY_PRODUCT_RULES_UPDATED',
+      code,
+      `CTR-${code}`,
+      `Updated jurisdiction flags: ${label}`,
+    );
+    showToast(`Updated product rules for ${code}.`, 'success');
+  };
+
   const convertCurrency = (from: Currency, to: Currency, amount: number) => {
     if (from === to) {
       return { success: false, message: 'Source and target currencies must be different.' };
@@ -1729,6 +1806,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...prev,
     ]);
 
+    if (authToken) {
+      fetch('/wallet/swap', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          fromCurrency: from,
+          toCurrency: to,
+          amount,
+        }),
+      }).catch((e) => console.error('Currency swap sync:', e));
+    }
+
     showToast(
       `Converted ${from} ${amount.toFixed(2)} to ${to} ${convertedAmount.toFixed(2)} successfully!`,
       'success'
@@ -1768,6 +1860,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         recentFunding,
         auditLog,
         countries,
+        updateCountryFlags,
         toasts,
         showToast,
         dismissToast,
@@ -1828,6 +1921,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openAuthModal,
         closeAuthModal,
         isSecurityModalOpen,
+        securityModalTab,
         openSecurityModal,
         closeSecurityModal,
         loginUser,

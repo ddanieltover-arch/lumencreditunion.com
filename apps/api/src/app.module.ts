@@ -32,11 +32,15 @@ import {
   CreateCardSchema,
   UpdateCardLimitsSchema,
   SimulateCardPurchaseSchema,
+  formatMoney,
+  parseMajorToMinor,
+  SupportedCurrency,
 } from '@lumenfield/shared';
 import { TransfersService } from './transfers/transfers.service';
 import { TransfersController } from './transfers/transfers.controller';
 import { CardsService } from './cards/cards.service';
 import { CardsController } from './cards/cards.controller';
+import { EmailService } from './email/email.service';
 
 export function createApiApp(
   authServiceOverride?: AuthService,
@@ -54,7 +58,8 @@ export function createApiApp(
   const authService = authServiceOverride || new AuthService(auditService, configService);
   const kycService = kycServiceOverride || new KycService(undefined, undefined, auditService);
   const ledgerService =
-    ledgerServiceOverride || new LedgerService(configService, auditService, kycService);
+    ledgerServiceOverride ||
+    new LedgerService(configService, auditService, kycService, authService);
   const authController = new AuthController(authService);
   const kycController = new KycController(kycService);
   const transfersService =
@@ -65,6 +70,25 @@ export function createApiApp(
     cardsServiceOverride ||
     new CardsService(ledgerService, auditService, authService, kycService, configService);
   const cardsController = new CardsController(cardsService);
+  const emailService = EmailService.getInstance();
+
+  // In-memory loan applications for email/API wiring (sandbox)
+  const loanApplications = new Map<
+    string,
+    {
+      id: string;
+      memberId: string;
+      memberName: string;
+      memberEmail: string;
+      type: 'auto' | 'mortgage';
+      requestedAmount: number;
+      termMonths: number;
+      purpose: string;
+      status: 'submitted' | 'under_review' | 'approved' | 'rejected';
+      currency: string;
+      createdAt: string;
+    }
+  >();
 
   // Core middleware
   app.use(securityHeadersMiddleware);
@@ -133,6 +157,53 @@ export function createApiApp(
   app.get('/countries', countriesController.getCountries);
   app.get('/countries/:code', countriesController.getCountryByCode);
   app.get('/countries/:code/sanction-check', countriesController.checkSanction);
+
+  // Public contact form → Resend (visitor confirmation + support inbox)
+  const contactRateLimiter = createRateLimiter({ windowMs: 60_000, max: 10 });
+  app.post('/contact', contactRateLimiter, async (req: Request, res: Response, next) => {
+    try {
+      const visitorName = String(req.body?.name || '').trim();
+      const visitorEmail = String(req.body?.email || '').trim();
+      const subject = String(req.body?.subject || 'Member support').trim();
+      const message = String(req.body?.message || '').trim();
+
+      if (!visitorName || !visitorEmail || !message) {
+        res.status(400).json({
+          message: 'Name, email, and message are required.',
+        });
+        return;
+      }
+
+      const inbox = await emailService.sendContactSupportInboxEmail({
+        visitorName,
+        visitorEmail,
+        subject,
+        message,
+      });
+      const confirmation = await emailService.sendContactConfirmationEmail({
+        visitorName,
+        visitorEmail,
+        subject,
+      });
+
+      if (!inbox.ok && !confirmation.ok) {
+        res.status(503).json({
+          success: false,
+          message:
+            'We could not deliver your message right now. Please email support@lumenfieldcu.com directly.',
+        });
+        return;
+      }
+
+      res.json({
+        success: true,
+        message: 'Your message has been sent to Member Services.',
+        emailDeliveryEnabled: emailService.isConfigured,
+      });
+    } catch (err) {
+      next(err);
+    }
+  });
 
   // ---------------------------------------------------------------------------
   // AUTHENTICATION ROUTES
@@ -237,6 +308,8 @@ export function createApiApp(
             'Lumenfield Credit Union Data Export. Generated in accordance with GDPR Article 15 and CCPA rights.',
         };
 
+        void emailService.sendDataExportReadyEmail(user.email, user.fullName);
+
         res.setHeader('Content-Type', 'application/json');
         res.setHeader(
           'Content-Disposition',
@@ -270,6 +343,9 @@ export function createApiApp(
         }
 
         const reason = req.body?.reason || 'Member requested deletion';
+        const scheduledPurgeDate = new Date(
+          Date.now() + 30 * 24 * 60 * 60 * 1000,
+        ).toISOString();
 
         await auditService.record({
           actorId: user.id,
@@ -284,11 +360,17 @@ export function createApiApp(
 
         user.lockedUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
+        void emailService.sendAccountDeletionScheduledEmail(
+          user.email,
+          user.fullName,
+          scheduledPurgeDate,
+        );
+
         res.json({
           success: true,
           message:
             'Your account deletion request has been scheduled in accordance with GDPR/CCPA regulations. Your session will now terminate.',
-          scheduledPurgeDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          scheduledPurgeDate,
         });
       } catch (err) {
         next(err);
@@ -305,6 +387,34 @@ export function createApiApp(
     try {
       const ip = (req.ip || '127.0.0.1').toString();
       const tx = await ledgerService.adminFundMemberWallet(req.body, req.user!.id, ip);
+      const memberId = String(req.body.memberId || tx.metadata?.memberId || '');
+      const member = authService.getUserById(memberId);
+      const creditEntry = tx.entries.find(
+        (e) => e.accountType === 'MEMBER_WALLET' && e.direction === 'CREDIT',
+      );
+      const amountFormatted = creditEntry
+        ? formatMoney({
+            amountMinor: creditEntry.amountMinor,
+            currency: creditEntry.currency as SupportedCurrency,
+          })
+        : tx.reference;
+
+      if (tx.status === 'PENDING_APPROVAL') {
+        void emailService.sendAdminDualApprovalPendingEmail({
+          amountFormatted,
+          reference: tx.reference,
+          memberId,
+          transactionId: tx.id,
+        });
+      } else if (member) {
+        void emailService.sendWalletFundedEmail(member.email, member.fullName, {
+          amountFormatted,
+          currency: tx.currency,
+          reference: tx.reference,
+          reason: req.body.reason,
+        });
+      }
+
       res.status(201).json(tx);
     } catch (err) {
       next(err);
@@ -340,6 +450,28 @@ export function createApiApp(
           req.user!.id,
           ip,
         );
+        const memberId = String(tx.metadata?.memberId || '');
+        const member = authService.getUserById(memberId);
+        const creditEntry = tx.entries.find(
+          (e) => e.accountType === 'MEMBER_WALLET' && e.direction === 'CREDIT',
+        );
+        const amountFormatted = creditEntry
+          ? formatMoney({
+              amountMinor: creditEntry.amountMinor,
+              currency: creditEntry.currency as SupportedCurrency,
+            })
+          : tx.reference;
+        if (member) {
+          void emailService.sendDualApprovalPostedEmail(member.email, member.fullName, {
+            amountFormatted,
+            reference: tx.reference,
+          });
+          void emailService.sendWalletFundedEmail(member.email, member.fullName, {
+            amountFormatted,
+            currency: tx.currency,
+            reference: tx.reference,
+          });
+        }
         res.json(tx);
       } catch (err) {
         next(err);
@@ -532,6 +664,10 @@ export function createApiApp(
   app.get('/wallet/statement', authenticateJwt, async (req: Request, res: Response) => {
     const format = ((req.query.format as string) || 'csv').toLowerCase();
     const currency = req.query.currency as string | undefined;
+    const user = authService.getUserById(req.user!.id);
+    if (user) {
+      void emailService.sendStatementReadyEmail(user.email, user.fullName, currency);
+    }
 
     if (format === 'csv') {
       const csv = ledgerService.exportStatementCsv(req.user!.id, currency);
@@ -546,7 +682,7 @@ export function createApiApp(
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader(
         'Content-Disposition',
-        `inline; filename="lumenfield-statement-${Date.now()}.html"`,
+        `attachment; filename="lumenfield-statement-${Date.now()}.html"`,
       );
       res.send(html);
     } else {
@@ -559,6 +695,128 @@ export function createApiApp(
       res.send(statement);
     }
   });
+
+  // Currency swap (server-side notify + optional ledger post for email pipeline)
+  app.post(
+    '/wallet/swap',
+    authenticateJwt,
+    requireKycApproved(kycService),
+    async (req: Request, res: Response, next) => {
+      try {
+        const from = String(req.body?.fromCurrency || '').toUpperCase() as SupportedCurrency;
+        const to = String(req.body?.toCurrency || '').toUpperCase() as SupportedCurrency;
+        const amountMajor = Number(req.body?.amount);
+        if (!from || !to || from === to || !Number.isFinite(amountMajor) || amountMajor <= 0) {
+          res.status(400).json({ message: 'Invalid currency swap request.' });
+          return;
+        }
+
+        const ratesToUSD: Record<string, number> = {
+          USD: 1.0,
+          CAD: 0.74,
+          GBP: 1.28,
+          EUR: 1.08,
+        };
+        if (!(from in ratesToUSD) || !(to in ratesToUSD)) {
+          res.status(400).json({ message: 'Unsupported currency pair.' });
+          return;
+        }
+
+        const fromMinor = parseMajorToMinor(amountMajor.toFixed(2), from).amountMinor;
+        const amountInUSD = amountMajor * ratesToUSD[from];
+        const convertedMajor = amountInUSD / ratesToUSD[to];
+        const toMinor = parseMajorToMinor(convertedMajor.toFixed(2), to).amountMinor;
+
+        const available = ledgerService.getOrCreateMemberWallet(req.user!.id, from).cachedBalanceMinor;
+        if (fromMinor > available) {
+          res.status(400).json({ message: `Insufficient ${from} balance.` });
+          return;
+        }
+
+        const ip = (req.ip || '127.0.0.1').toString();
+        const reference = `SWAP-${Date.now().toString(36).toUpperCase()}`;
+        await ledgerService.postTransaction(
+          {
+            idempotencyKey: `idemp-swap-${req.user!.id}-${Date.now()}`,
+            reference,
+            transactionType: 'CURRENCY_SWAP',
+            description: `Currency swap ${from} → ${to}`,
+            currency: from,
+            source: 'TRANSFER',
+            metadata: { from, to, fromMinor, toMinor },
+            entries: [
+              {
+                accountId: ledgerService.getOrCreateMemberWallet(req.user!.id, from).id,
+                accountType: 'MEMBER_WALLET',
+                direction: 'DEBIT',
+                amountMinor: fromMinor,
+                currency: from,
+              },
+              {
+                accountId: `system-pool-${from.toLowerCase()}`,
+                accountType: 'SANDBOX_FUNDING_POOL',
+                direction: 'CREDIT',
+                amountMinor: fromMinor,
+                currency: from,
+              },
+            ],
+          },
+          req.user!.id,
+          'MEMBER',
+          ip,
+        );
+        await ledgerService.postTransaction(
+          {
+            idempotencyKey: `idemp-swap-in-${req.user!.id}-${Date.now()}`,
+            reference: `${reference}-IN`,
+            transactionType: 'CURRENCY_SWAP',
+            description: `Currency swap credit ${to}`,
+            currency: to,
+            source: 'TRANSFER',
+            metadata: { from, to, fromMinor, toMinor },
+            entries: [
+              {
+                accountId: `system-pool-${to.toLowerCase()}`,
+                accountType: 'SANDBOX_FUNDING_POOL',
+                direction: 'DEBIT',
+                amountMinor: toMinor,
+                currency: to,
+              },
+              {
+                accountId: ledgerService.getOrCreateMemberWallet(req.user!.id, to).id,
+                accountType: 'MEMBER_WALLET',
+                direction: 'CREDIT',
+                amountMinor: toMinor,
+                currency: to,
+              },
+            ],
+          },
+          req.user!.id,
+          'MEMBER',
+          ip,
+        );
+
+        const user = authService.getUserById(req.user!.id);
+        if (user) {
+          void emailService.sendCurrencySwapEmail(user.email, user.fullName, {
+            fromAmount: formatMoney({ amountMinor: fromMinor, currency: from }),
+            toAmount: formatMoney({ amountMinor: toMinor, currency: to }),
+            fromCurrency: from,
+            toCurrency: to,
+          });
+        }
+
+        res.json({
+          success: true,
+          reference,
+          from: { currency: from, amountMinor: fromMinor },
+          to: { currency: to, amountMinor: toMinor },
+        });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // ---------------------------------------------------------------------------
   // TRANSFERS & BENEFICIARIES (MEMBER-TO-MEMBER, BANK, CRYPTO)
@@ -831,11 +1089,143 @@ export function createApiApp(
     requireKycApproved(kycService),
     async (req: Request, res: Response, next) => {
       try {
-        res.json({
+        const user = authService.getUserById(req.user!.id);
+        if (!user) {
+          res.status(404).json({ message: 'User not found.' });
+          return;
+        }
+        const type = (req.body?.type === 'mortgage' ? 'mortgage' : 'auto') as
+          | 'auto'
+          | 'mortgage';
+        const amount = Number(req.body?.amount || req.body?.requestedAmount || 0);
+        const termMonths = Number(req.body?.termMonths || 60);
+        const purpose = String(req.body?.purpose || 'General');
+        if (!Number.isFinite(amount) || amount <= 0) {
+          res.status(400).json({ message: 'Valid loan amount is required.' });
+          return;
+        }
+
+        const loanId = `loan-${type}-${Date.now().toString(36)}`;
+        const amountFormatted = formatMoney({
+          amountMinor: Math.round(amount * 100),
+          currency: 'USD',
+        });
+        const record = {
+          id: loanId,
+          memberId: user.id,
+          memberName: user.fullName,
+          memberEmail: user.email,
+          type,
+          requestedAmount: amount,
+          termMonths,
+          purpose,
+          status: 'under_review' as const,
+          currency: 'USD',
+          createdAt: new Date().toISOString(),
+        };
+        loanApplications.set(loanId, record);
+
+        void emailService.sendLoanSubmittedEmail(user.email, user.fullName, {
+          loanType: type,
+          amountFormatted,
+          termMonths,
+        });
+        void emailService.sendLoanUnderReviewEmail(user.email, user.fullName, {
+          amountFormatted,
+        });
+        void emailService.sendAdminNewLoanEmail({
+          memberName: user.fullName,
+          loanType: type,
+          amountFormatted,
+          loanId,
+        });
+
+        res.status(201).json({
           success: true,
           message: 'Loan application submitted for underwriting.',
           action: 'LOAN_APPLICATION_SUBMITTED',
+          loan: record,
         });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+
+  app.post(
+    '/admin/loans/:id/decision',
+    authenticateJwt,
+    requireRole(['SUPER_ADMIN']),
+    async (req: Request, res: Response, next) => {
+      try {
+        let loan = loanApplications.get(req.params.id);
+        // Allow admin UI to notify even if the loan was only tracked client-side
+        if (!loan && req.body?.memberEmail && req.body?.memberName) {
+          loan = {
+            id: req.params.id,
+            memberId: String(req.body.memberId || 'unknown'),
+            memberName: String(req.body.memberName),
+            memberEmail: String(req.body.memberEmail),
+            type: req.body.type === 'mortgage' ? 'mortgage' : 'auto',
+            requestedAmount: Number(req.body.requestedAmount || 0),
+            termMonths: Number(req.body.termMonths || 0),
+            purpose: String(req.body.purpose || ''),
+            status: 'under_review',
+            currency: String(req.body.currency || 'USD'),
+            createdAt: new Date().toISOString(),
+          };
+          loanApplications.set(loan.id, loan);
+        }
+        if (!loan) {
+          res.status(404).json({ message: 'Loan application not found.' });
+          return;
+        }
+        const decision = String(req.body?.decision || '').toUpperCase();
+        const reason = req.body?.reason ? String(req.body.reason) : undefined;
+        const amountFormatted = formatMoney({
+          amountMinor: Math.round(loan.requestedAmount * 100),
+          currency: 'USD',
+        });
+
+        if (decision === 'APPROVE') {
+          loan.status = 'approved';
+          // Disburse only when member exists server-side (avoid double client+server credit noise)
+          const member = authService.getUserById(loan.memberId);
+          if (member) {
+            const ip = (req.ip || '127.0.0.1').toString();
+            const amountMinor = Math.round(loan.requestedAmount * 100);
+            try {
+              await ledgerService.adminFundMemberWallet(
+                {
+                  memberId: loan.memberId,
+                  currency: 'USD',
+                  amountMinor,
+                  reason: `Loan disbursement ${loan.id}`,
+                  source: 'LOAN_DISBURSEMENT',
+                  idempotencyKey: `idemp-loan-${loan.id}`,
+                },
+                req.user!.id,
+                ip,
+              );
+            } catch (fundErr) {
+              console.warn('[loans] disbursement skipped:', fundErr);
+            }
+          }
+          void emailService.sendLoanApprovedEmail(loan.memberEmail, loan.memberName, {
+            amountFormatted,
+          });
+        } else if (decision === 'REJECT') {
+          loan.status = 'rejected';
+          void emailService.sendLoanRejectedEmail(loan.memberEmail, loan.memberName, {
+            amountFormatted,
+            reason,
+          });
+        } else {
+          res.status(400).json({ message: 'decision must be APPROVE or REJECT.' });
+          return;
+        }
+
+        res.json({ success: true, loan });
       } catch (err) {
         next(err);
       }

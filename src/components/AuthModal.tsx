@@ -486,11 +486,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       onChange={(e) => setCountryCode(e.target.value)}
                       className="w-full pl-9 pr-2 py-2 bg-[#F4F7F6] border border-[#DCE5E3] rounded-xl text-xs font-semibold text-[#0E1B1F] focus:outline-none focus:ring-2 focus:ring-[#0A3D3F] min-h-[44px] cursor-pointer"
                     >
-                      {registrationCountries.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.name} ({c.currency})
-                        </option>
-                      ))}
+                      {[...registrationCountries]
+                        .sort((a, b) => a.name.localeCompare(b.name))
+                        .map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.name} ({c.currency})
+                          </option>
+                        ))}
                     </select>
                   </div>
                 </div>

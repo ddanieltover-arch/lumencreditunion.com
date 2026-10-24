@@ -16,6 +16,7 @@ import {
 } from './sanctions-screening.service';
 import { AuditService } from '../audit/audit.service';
 import { CountriesService } from '../countries/countries.service';
+import { EmailService } from '../email/email.service';
 
 export interface MemberNotification {
   id: string;
@@ -39,6 +40,7 @@ export class KycService {
     private readonly sanctionsService: SanctionsScreeningService = new SandboxSanctionsScreeningService(),
     public readonly auditService: AuditService = new AuditService(),
     private readonly countriesService: CountriesService = new CountriesService(),
+    private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
     this.seedDemoSubmissions();
   }
@@ -284,6 +286,18 @@ export class KycService {
       type: 'info',
     });
 
+    void this.emailService.sendKycSubmittedEmail(
+      memberEmail,
+      memberName,
+      validated.documentType,
+    );
+    void this.emailService.sendAdminNewKycEmail({
+      memberName,
+      memberEmail,
+      documentType: validated.documentType,
+      submissionId,
+    });
+
     // Return safe submission (without storage keys exposed)
     return this.getMemberSubmission(memberId)!;
   }
@@ -378,6 +392,11 @@ export class KycService {
         type: 'success',
       });
 
+      void this.emailService.sendKycApprovedEmail(
+        submission.memberEmail,
+        submission.memberName,
+      );
+
       // Audit Log
       await this.auditService.record({
         actorId: adminId,
@@ -406,6 +425,12 @@ export class KycService {
         type: 'error',
       });
 
+      void this.emailService.sendKycRejectedEmail(
+        submission.memberEmail,
+        submission.memberName,
+        validated.reason!,
+      );
+
       await this.auditService.record({
         actorId: adminId,
         actorRole: 'SUPER_ADMIN',
@@ -431,6 +456,12 @@ export class KycService {
         message: `Compliance review update: ${validated.reason}. Please upload the requested document to complete verification.`,
         type: 'warning',
       });
+
+      void this.emailService.sendKycNeedsMoreInfoEmail(
+        submission.memberEmail,
+        submission.memberName,
+        validated.reason!,
+      );
 
       await this.auditService.record({
         actorId: adminId,

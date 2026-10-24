@@ -20,6 +20,7 @@ import { t } from '../../apps/web/src/translations';
 interface SecuritySettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: 'mfa' | 'password' | 'sessions' | 'token_rotation';
 }
 
 interface SessionItem {
@@ -35,10 +36,13 @@ interface SessionItem {
 export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
   isOpen,
   onClose,
+  initialTab = 'mfa',
 }) => {
   const { currentUser, showToast, authToken, refreshToken, rotateTokens, logoutUser } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'mfa' | 'password' | 'sessions' | 'token_rotation'>('mfa');
+  const [activeTab, setActiveTab] = useState<'mfa' | 'password' | 'sessions' | 'token_rotation'>(
+    initialTab,
+  );
 
   // MFA Enrollment State
   const [mfaSecret, setMfaSecret] = useState<string | null>(null);
@@ -62,10 +66,11 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setActiveTab(initialTab);
       loadSessions();
       setMfaEnabledState(currentUser?.mfaEnabled ?? false);
     }
-  }, [isOpen, currentUser, authToken]);
+  }, [isOpen, initialTab, currentUser, authToken]);
 
   const loadSessions = async () => {
     setLoading(true);

@@ -20,7 +20,7 @@ export const CountrySchema = z.object({
   id: z.string().uuid().optional(),
   code: z.string().length(2).toUpperCase(),
   name: z.string().min(1),
-  currency: z.enum(['USD', 'CAD', 'GBP', 'EUR']),
+  currency: z.string().length(3).toUpperCase(),
   currencySymbol: z.string().min(1),
   enabled: z.boolean(),
   acceptedIdTypes: z.array(IdDocumentTypeSchema),

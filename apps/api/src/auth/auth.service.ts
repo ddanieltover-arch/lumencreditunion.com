@@ -285,8 +285,9 @@ export class AuthService {
     if (!this.configService.isSandbox) {
       await this.emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
     } else {
-      // Sandbox: auto-verify for faster demos
+      // Sandbox: auto-verify for faster demos; still send welcome via Resend when configured
       user.emailVerified = true;
+      void this.emailService.sendWelcomeEmail(user.email, user.fullName);
     }
 
     // 6. Audit log
@@ -334,6 +335,7 @@ export class AuthService {
     user.emailVerified = true;
     user.updatedAt = new Date().toISOString();
     this.emailVerificationTokens.delete(token);
+    void this.emailService.sendWelcomeEmail(user.email, user.fullName);
     return true;
   }
 
@@ -429,6 +431,7 @@ export class AuthService {
       });
 
       if (isNowLocked) {
+        void this.emailService.sendAccountLockedEmail(user.email, user.fullName, 15);
         throw new Error(
           'Account locked: 5 consecutive failed login attempts. Locked for 15 minutes.',
         );
@@ -615,6 +618,23 @@ export class AuthService {
       userAgent,
     });
 
+    // Notify on new device / unfamiliar IP (exclude the session we just created)
+    const knownDevice = Array.from(this.sessions.values()).some(
+      (s) =>
+        s.userId === user.id &&
+        s.id !== sessionId &&
+        !s.isRevoked &&
+        s.deviceInfo === session.deviceInfo &&
+        s.ipAddress === ipAddress,
+    );
+    if (!knownDevice) {
+      void this.emailService.sendNewLoginEmail(user.email, user.fullName, {
+        deviceInfo: session.deviceInfo,
+        ipAddress,
+        when: nowIso,
+      });
+    }
+
     const { passwordHash: _, mfaSecret: __, mfaRecoveryCodes: ___, ...safeUser } = user;
     return {
       requiresMfa: false as const,
@@ -688,6 +708,12 @@ export class AuthService {
         ipAddress,
         userAgent,
       });
+
+      void this.emailService.sendSessionRevokedEmail(
+        user.email,
+        user.fullName,
+        'Refresh token reuse was detected. This session was revoked to protect your account.',
+      );
 
       const error: any = new Error(
         'Security Alert: Refresh token reuse detected. This session has been revoked.',
@@ -878,6 +904,8 @@ export class AuthService {
       ipAddress,
     });
 
+    void this.emailService.sendMfaEnabledEmail(user.email, user.fullName);
+
     return { success: true, message: 'Two-Factor Authentication successfully enabled.' };
   }
 
@@ -920,6 +948,8 @@ export class AuthService {
       afterState: { mfaEnabled: false },
       ipAddress,
     });
+
+    void this.emailService.sendMfaDisabledEmail(user.email, user.fullName);
 
     return { success: true };
   }
@@ -1003,6 +1033,8 @@ export class AuthService {
       ipAddress,
     });
 
+    void this.emailService.sendPasswordResetConfirmedEmail(user.email, user.fullName);
+
     return { success: true, message: 'Password has been reset successfully. Please log in.' };
   }
 
@@ -1037,6 +1069,8 @@ export class AuthService {
       afterState: { otherSessionsRevoked: true },
       ipAddress,
     });
+
+    void this.emailService.sendPasswordChangedEmail(user.email, user.fullName);
 
     return { success: true, message: 'Password successfully changed.' };
   }

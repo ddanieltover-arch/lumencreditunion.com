@@ -8,7 +8,7 @@ describe('Countries Data & Sanctions Logic (HARD RULE 8)', () => {
     const countries = await service.findAll();
     const codes = countries.map((c) => c.code);
 
-    // US, CA, GB, DE, FR, NL, ES, IT, IE
+    // Primary markets plus global coverage
     expect(codes).toContain('US');
     expect(codes).toContain('CA');
     expect(codes).toContain('GB');
@@ -18,8 +18,14 @@ describe('Countries Data & Sanctions Logic (HARD RULE 8)', () => {
     expect(codes).toContain('ES');
     expect(codes).toContain('IT');
     expect(codes).toContain('IE');
+    expect(codes).toContain('JP');
+    expect(codes).toContain('AU');
+    expect(codes).toContain('BR');
+    expect(codes).toContain('NG');
+    expect(codes).toContain('IN');
 
-    expect(countries.length).toBe(9);
+    expect(countries.length).toBeGreaterThanOrEqual(180);
+    expect(countries.every((c) => c.currency.length === 3)).toBe(true);
   });
 
   it('Each seeded country specifies currency, enabled flag, and accepted ID types', async () => {

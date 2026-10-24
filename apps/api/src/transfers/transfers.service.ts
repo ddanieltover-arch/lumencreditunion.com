@@ -18,6 +18,7 @@ import { AuthService } from '../auth/auth.service';
 import type { KycService } from '../kyc/kyc.service';
 import { verifyTotpCode } from '../auth/totp.util';
 import { CryptoProvider, SandboxCryptoProvider } from './crypto.provider';
+import { EmailService } from '../email/email.service';
 
 export interface BeneficiaryRecord {
   id: string;
@@ -84,9 +85,16 @@ export class TransfersService {
     private readonly auditService: AuditService = new AuditService(),
     public readonly kycService?: KycService,
     cryptoProviderOverride?: CryptoProvider,
+    private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
     this.cryptoProvider = cryptoProviderOverride || new SandboxCryptoProvider();
     this.seedDemoBeneficiaries();
+  }
+
+  private memberContact(memberId: string): { email: string; fullName: string } | null {
+    const user = this.authService.getUserById(memberId);
+    if (!user?.email) return null;
+    return { email: user.email, fullName: user.fullName || 'Member' };
   }
 
   private seedDemoBeneficiaries() {
@@ -239,6 +247,24 @@ export class TransfersService {
       message: `${record.name} (${record.countryCode}) added. 24-hour security cooling-off period active.`,
       type: 'info',
     });
+
+    const member = this.memberContact(memberId);
+    if (member) {
+      void this.emailService.sendBeneficiaryAddedEmail(member.email, member.fullName, {
+        name: record.name,
+        countryCode: record.countryCode,
+        coolingHours,
+      });
+      const delayMs = Math.max(coolingHours, 0) * 3600 * 1000;
+      setTimeout(() => {
+        const current = this.beneficiaries.get(beneficiaryId);
+        if (!current || current.memberId !== memberId) return;
+        if (new Date(current.coolingOffExpiresAt).getTime() > Date.now()) return;
+        void this.emailService.sendBeneficiaryReadyEmail(member.email, member.fullName, {
+          name: current.name,
+        });
+      }, delayMs);
+    }
 
     return record;
   }
@@ -547,6 +573,37 @@ export class TransfersService {
       transferId,
     });
 
+    const sender = this.memberContact(senderUserId);
+    const recipient = this.memberContact(recipientLookup.recipientId);
+    if (sender) {
+      void this.emailService.sendTransferSentEmail(sender.email, sender.fullName, {
+        amountFormatted: record.amountFormatted,
+        recipient: recipientLookup.name,
+        reference,
+      });
+    }
+    if (recipient) {
+      void this.emailService.sendTransferReceivedEmail(recipient.email, recipient.fullName, {
+        amountFormatted: record.amountFormatted,
+        sender: sender?.fullName || 'a Lumenfield member',
+        reference,
+      });
+    }
+    if (record.isFlagged) {
+      if (sender) {
+        void this.emailService.sendTransferFlaggedMemberEmail(sender.email, sender.fullName, {
+          amountFormatted: record.amountFormatted,
+          reference,
+        });
+      }
+      void this.emailService.sendAdminFlaggedTransferEmail({
+        amountFormatted: record.amountFormatted,
+        reference,
+        flags: record.fraudFlags.join(', ') || 'FLAGGED',
+        transferId,
+      });
+    }
+
     await this.auditService.record({
       actorId: senderUserId,
       actorRole: 'MEMBER',
@@ -665,6 +722,29 @@ export class TransfersService {
       transferId,
     });
 
+    const member = this.memberContact(memberId);
+    if (member) {
+      void this.emailService.sendBankTransferInitiatedEmail(member.email, member.fullName, {
+        amountFormatted: record.amountFormatted,
+        beneficiary: beneficiary.name,
+        reference,
+      });
+    }
+    if (record.isFlagged) {
+      if (member) {
+        void this.emailService.sendTransferFlaggedMemberEmail(member.email, member.fullName, {
+          amountFormatted: record.amountFormatted,
+          reference,
+        });
+      }
+      void this.emailService.sendAdminFlaggedTransferEmail({
+        amountFormatted: record.amountFormatted,
+        reference,
+        flags: record.fraudFlags.join(', ') || 'FLAGGED',
+        transferId,
+      });
+    }
+
     await this.auditService.record({
       actorId: memberId,
       actorRole: 'MEMBER',
@@ -700,6 +780,13 @@ export class TransfersService {
             type: 'success',
             transferId,
           });
+          const contact = this.memberContact(memberId);
+          if (contact) {
+            void this.emailService.sendBankTransferClearedEmail(contact.email, contact.fullName, {
+              amountFormatted: record.amountFormatted,
+              reference,
+            });
+          }
         }
       }, 100);
     }
@@ -748,6 +835,15 @@ export class TransfersService {
         type: 'error',
         transferId,
       });
+
+      const sender = this.memberContact(transfer.senderMemberId);
+      if (sender) {
+        void this.emailService.sendBankTransferFailedEmail(sender.email, sender.fullName, {
+          amountFormatted: transfer.amountFormatted,
+          reference: transfer.reference,
+          reason: transfer.failureReason || 'Clearing rejection',
+        });
+      }
 
       await this.auditService.record({
         actorId: 'SYSTEM',
@@ -870,6 +966,14 @@ export class TransfersService {
       transferId,
     });
 
+    const member = this.memberContact(memberId);
+    if (member) {
+      void this.emailService.sendCryptoDepositEmail(member.email, member.fullName, {
+        amountFormatted: record.amountFormatted,
+        network,
+      });
+    }
+
     return record;
   }
 
@@ -977,6 +1081,15 @@ export class TransfersService {
       transferId,
     });
 
+    const member = this.memberContact(memberId);
+    if (member) {
+      void this.emailService.sendCryptoWithdrawalEmail(member.email, member.fullName, {
+        amountFormatted: record.amountFormatted,
+        network: input.network,
+        txHashShort: `${sim.txHash.slice(0, 14)}...`,
+      });
+    }
+
     return record;
   }
 
@@ -1055,6 +1168,20 @@ export class TransfersService {
 
     if (action === 'REJECT') {
       await this.processTransferState(transferId, 'FAILED', `Rejected by compliance admin: ${reason}`, ipAddress);
+    }
+
+    const member = this.memberContact(transfer.senderMemberId);
+    if (member) {
+      if (action === 'APPROVE') {
+        void this.emailService.sendTransferFlagClearedEmail(member.email, member.fullName, {
+          reference: transfer.reference,
+        });
+      } else {
+        void this.emailService.sendTransferFlagRejectedEmail(member.email, member.fullName, {
+          reference: transfer.reference,
+          reason,
+        });
+      }
     }
 
     await this.auditService.record({
