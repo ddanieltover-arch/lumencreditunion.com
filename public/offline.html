@@ -29,15 +29,6 @@
         flex-direction: column;
         min-height: 100vh;
       }
-      .sandbox-banner {
-        background-color: var(--warning-bg);
-        border-bottom: 1px solid #f0d58a;
-        padding: 8px 16px;
-        font-size: 12px;
-        font-weight: 600;
-        color: #5a4100;
-        text-align: center;
-      }
       .container {
         flex: 1;
         display: flex;
@@ -107,9 +98,6 @@
     </style>
   </head>
   <body>
-    <div class="sandbox-banner">
-      Sandbox environment: all balances are test funds, not real money.
-    </div>
     <main class="container">
       <div class="card">
         <div class="icon-box" aria-hidden="true">
@@ -125,7 +113,7 @@
         </div>
         <h1>Connection Paused</h1>
         <p>
-          You are currently offline. Lumenfield requires a secure internet connection to reconcile double-entry ledger balances, verify authentication tokens, and process sandbox transactions.
+          You are currently offline. Lumenfield Credit Union requires a secure internet connection to access your accounts, verify authentication, and process transactions.
         </p>
         <button class="retry-btn" onclick="window.location.reload()" aria-label="Retry network connection and reload page">
           Retry Connection

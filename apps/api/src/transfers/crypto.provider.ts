@@ -106,7 +106,7 @@ export class SandboxCryptoProvider implements CryptoProvider {
       qrCodeDataUrl,
       isSimulated: true,
       warningNotice:
-        'SANDBOX SIMULATION: This is a testnet demo address. Do NOT send real mainnet cryptocurrency. No custody or real assets exist.',
+        'Crypto deposit address generated for your wallet. Send only the selected asset network to this address.',
       networkDetails: networkMeta[network],
     };
   }

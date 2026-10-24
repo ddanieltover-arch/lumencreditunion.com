@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "Lumenfield - Financial Sandbox",
+  "name": "Lumenfield Credit Union",
   "short_name": "Lumenfield",
-  "description": "Private financial sandbox and multi-currency wallet platform with member transfers, virtual cards, loan applications, and administrative double-entry ledger funding.",
+  "description": "Lumenfield Credit Union — multi-currency wallets, member transfers, virtual cards, and loans.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

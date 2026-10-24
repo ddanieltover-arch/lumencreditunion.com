@@ -43,6 +43,7 @@ import { PWAInstallButton } from './PWAInstallButton';
 import {
   PanelSwap,
   FadeUp,
+  CountUp,
   motion,
   MOTION,
   usePrefersReducedMotion,
@@ -522,9 +523,13 @@ export const MemberDashboard: React.FC = () => {
                         USD wallet
                       </span>
                     </div>
-                    <div className="font-display font-bold text-4xl sm:text-5xl text-white tracking-tight">
-                      ${activeMember.wallets.USD.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                    </div>
+                    <CountUp
+                      value={activeMember.wallets.USD}
+                      prefix="$"
+                      delay={0.08}
+                      duration={0.85}
+                      className="font-display font-bold text-4xl sm:text-5xl text-white tracking-tight tabular-nums"
+                    />
                   </div>
 
                   {/* Balance Action Buttons (From Design) */}
@@ -1592,7 +1597,7 @@ export const MemberDashboard: React.FC = () => {
                   {/* Test notification trigger buttons */}
                   <div className="space-y-1.5 pt-2 border-t border-[#EDF2F1]">
                     <span className="text-[11px] font-bold text-[#4A5B60] uppercase tracking-wider block">
-                      Test push delivery:
+                      Push notification samples:
                     </span>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
@@ -2125,7 +2130,7 @@ export const MemberDashboard: React.FC = () => {
             </div>
 
             <div className="p-3.5 bg-[#FFF1CC] rounded-xl text-xs text-[#5A4100] border border-[#F0D58A]">
-              Under active underwriting review. You can simulate administrator approval from the Admin Console.
+              Under active underwriting review. An administrator will notify you when a decision is ready.
             </div>
 
             <button

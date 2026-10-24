@@ -129,16 +129,18 @@ export const LayoutShell: React.FC<LayoutShellProps> = ({
       <footer className="bg-[#0E1B1F] border-t border-[#0A3D3F] text-[#8FA5A3] py-8 px-4 text-xs">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div>
-            <p className="font-semibold text-white">Lumenfield Financial Sandbox</p>
+            <p className="font-semibold text-white">Lumenfield Credit Union</p>
             <p className="mt-1 text-[11px] max-w-xl text-[#8FA5A3]">
-              Private testbed for multi-currency wallets, virtual debit cards, and simulated loan underwriting.
-              All funds and balances are fictitious sandbox units. Lumenfield is not a chartered bank or insured depository institution.
+              Digital member banking for multi-currency wallets, virtual debit cards, transfers, and loans
+              across the USA, Canada, the UK, and Europe.
             </p>
           </div>
-          <div className="flex items-center gap-4 text-[11px]">
-            <span className="text-[#DCE5E3]">Countries Data Table: ISO-3166 & ISO-4217</span>
-            <span className="font-mono text-[#F5B942]">v0.1.0-alpha</span>
-          </div>
+          <a
+            href="mailto:support@lumenfieldcu.com"
+            className="text-[11px] text-[#DCE5E3] hover:text-white transition-colors"
+          >
+            support@lumenfieldcu.com
+          </a>
         </div>
       </footer>
     </div>

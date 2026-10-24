@@ -4,6 +4,7 @@ import {
   Lock,
   Mail,
   User,
+  Phone,
   Calendar,
   Globe2,
   KeyRound,
@@ -40,6 +41,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
   const [countryCode, setCountryCode] = useState('US');
   const [dateOfBirth, setDateOfBirth] = useState('');
   const [totpCode, setTotpCode] = useState('');
@@ -133,6 +135,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         email,
         password,
         fullName,
+        phone: phone.trim(),
         countryCode,
         dateOfBirth,
         role: 'MEMBER',
@@ -169,7 +172,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (data.sandboxResetToken) {
         setResetToken(data.sandboxResetToken);
         setMode('reset');
-        showToast('Password reset token generated (Sandbox mode).', 'info');
+        showToast('Password reset ready. Continue to set a new password.', 'info');
       } else {
         setInfoMsg(
           data.message ||
@@ -235,13 +238,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 {mode === 'forgot' && t('auth.resetPasswordTitle')}
                 {mode === 'reset' && t('auth.confirmResetTitle')}
               </h2>
-              <p className="text-xs text-[#DCE5E3]/80">
-                {mode === 'login' && t('auth.signInSubtitle')}
-                {mode === 'register' && t('auth.registerSubtitle')}
-                {mode === 'mfa_prompt' && (isRecoveryCodeMode ? t('auth.recoveryCodeSubtitle') : t('auth.totpSubtitle'))}
-                {mode === 'forgot' && t('auth.resetPasswordSubtitle')}
-                {mode === 'reset' && 'Create a strong new password.'}
-              </p>
+              {mode !== 'register' && (
+                <p className="text-xs text-[#DCE5E3]/80">
+                  {mode === 'login' && t('auth.signInSubtitle')}
+                  {mode === 'mfa_prompt' &&
+                    (isRecoveryCodeMode ? t('auth.recoveryCodeSubtitle') : t('auth.totpSubtitle'))}
+                  {mode === 'forgot' && t('auth.resetPasswordSubtitle')}
+                  {mode === 'reset' && 'Create a strong new password.'}
+                </p>
+              )}
             </div>
           </div>
           <button
@@ -439,6 +444,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="jane.doe@example.com"
+                    className="w-full pl-10 pr-3 py-2 bg-[#F4F7F6] border border-[#DCE5E3] rounded-xl text-sm text-[#0E1B1F] focus:outline-none focus:ring-2 focus:ring-[#0A3D3F] min-h-[44px]"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label htmlFor="reg-phone" className="block text-xs font-semibold text-[#0E1B1F] mb-1">
+                  {t('auth.phone')}
+                </label>
+                <div className="relative">
+                  <Phone className="w-4 h-4 text-[#4A5B60] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    id="reg-phone"
+                    type="tel"
+                    required
+                    autoComplete="tel"
+                    inputMode="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    placeholder="+1 415 555 0100"
                     className="w-full pl-10 pr-3 py-2 bg-[#F4F7F6] border border-[#DCE5E3] rounded-xl text-sm text-[#0E1B1F] focus:outline-none focus:ring-2 focus:ring-[#0A3D3F] min-h-[44px]"
                   />
                 </div>

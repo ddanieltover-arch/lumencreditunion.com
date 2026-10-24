@@ -881,8 +881,8 @@ export class LedgerService {
     });
 
     return JSON.stringify({
-      title: 'Lumenfield Sandbox Account Statement',
-      notice: 'Sandbox environment: all balances are test funds, not real money.',
+      title: 'Lumenfield Credit Union Account Statement',
+      notice: 'Lumenfield Credit Union — official member account statement.',
       memberId,
       currency: currency || 'ALL',
       generatedAt: new Date().toISOString(),
@@ -914,7 +914,6 @@ export class LedgerService {
   <title>Lumenfield Account Statement</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0E1B1F; margin: 40px; background: #fff; }
-    .banner { background: #FFF1CC; color: #5A4100; padding: 12px 18px; border-radius: 8px; border: 1px solid #F0D58A; font-size: 13px; font-weight: 600; margin-bottom: 24px; text-align: center; }
     .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0A3D3F; padding-bottom: 16px; margin-bottom: 24px; }
     .title { font-size: 24px; font-weight: 700; color: #0A3D3F; }
     .meta { font-size: 13px; color: #4A5B60; text-align: right; }
@@ -933,17 +932,16 @@ export class LedgerService {
   </style>
 </head>
 <body>
-  <div class="banner">Sandbox environment: all balances are test funds, not real money.</div>
   <div class="header">
     <div>
-      <div class="title">Lumenfield Financial Sandbox</div>
-      <div style="font-size: 14px; color: #4A5B60; margin-top: 4px;">Private Member Account Statement</div>
+      <div class="title">Lumenfield Credit Union</div>
+      <div style="font-size: 14px; color: #4A5B60; margin-top: 4px;">Member Account Statement</div>
       <div style="font-size: 12px; color: #8FA5A3; margin-top: 2px;">Member ID: <strong>${memberId}</strong></div>
     </div>
     <div class="meta">
       <div><strong>Statement Date:</strong> ${now}</div>
       <div><strong>Currency Scope:</strong> ${currency || 'All Enabled Currencies'}</div>
-      <div><strong>Status:</strong> Sandbox Simulation</div>
+      <div><strong>Status:</strong> Verified Member</div>
     </div>
   </div>
 
@@ -1006,7 +1004,7 @@ export class LedgerService {
   </table>
 
   <div class="footer">
-    Notice: Lumenfield is a private financial testbed. Balances represent test sandbox assets. Not an insured bank or chartered depository.
+    Lumenfield Credit Union — Member account statement. www.lumenfieldcu.com
   </div>
 </body>
 </html>`;

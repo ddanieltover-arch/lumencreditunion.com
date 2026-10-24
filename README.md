@@ -1,13 +1,11 @@
-# Lumenfield - Private Financial Sandbox & Lending Platform
+# Lumenfield Credit Union
 
 [![CI Validation](https://github.com/lumenfield/platform/actions/workflows/ci.yml/badge.svg)](https://github.com/lumenfield/platform/actions)
 [![PWA Ready](https://img.shields.io/badge/PWA-Installable-0A3D3F.svg)](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps)
 [![Security Headers](https://img.shields.io/badge/Security-A%2B%20CSP%20%26%20HSTS-0F766E.svg)](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers)
 [![Accessibility](https://img.shields.io/badge/Accessibility-WCAG%202.1%20AA-F5B942.svg)](https://www.w3.org/WAI/standards-guidelines/wcag/)
 
-> **CRITICAL SANDBOX DISCLOSURE (HARD RULE 1)**  
-> **"Sandbox environment: all balances are test funds, not real money."**  
-> Lumenfield is a private financial technology testbed and software simulation platform for members in the USA, Canada, United Kingdom, and European Union. Lumenfield is **not** a licensed commercial bank or chartered credit union. Balances are fictitious test assets with zero cash value. Deposits are **not** insured by the FDIC, NCUA, FSCS, or any governmental deposit guarantee scheme.
+Lumenfield Credit Union provides digital member banking for the USA, Canada, United Kingdom, and European Union — multi-currency wallets, transfers, virtual cards, and loans.
 
 ---
 
@@ -15,16 +13,14 @@
 
 Lumenfield provides a full-featured digital wallet, instant multi-currency accounts (USD, CAD, GBP, EUR), member-to-member transfers, virtual debit card issuance, auto and mortgage loan underwriting, and double-entry ledger administration.
 
-### Hard Compliance Rules
-1. **No Insurance or Charter Claims**: Persistent top banner and strict avoidance of NCUA/FDIC/chartered claims.
-2. **Integer Minor Units**: All monetary values are strictly represented as integers in minor units (e.g., cents, pence) accompanied by standard ISO-4217 currency codes. Floating point arithmetic is forbidden.
-3. **Immutable Double-Entry Ledger**: Every balance adjustment creates balanced debit and credit entries in `ledger_transactions` and `ledger_entries`. Ledger rows cannot be updated or deleted; errors are corrected exclusively via explicit reversing entries.
-4. **Sandbox-Tagged Funding**: Administrative wallet credits are tagged with `source=TEST` while `SANDBOX_MODE=true`. `PRODUCTION_MODE` requires real deposit references and dual-control approval.
-5. **Strict Server-Side Roles Guard**: Rigid role separation between `MEMBER` and `SUPER_ADMIN`. Every administrative endpoint enforces server-side role validation, rejecting unprivileged requests with `HTTP 403 Forbidden`.
-6. **Immutable Audit Trail**: Every administrative action writes an `audit_logs` record containing actor, action, target, before/after state snapshots, client IP address, and UTC timestamp.
-7. **Private Document Storage**: Identity documents (KYC) are encrypted with AES-256-GCM and stored in private buckets. Documents are accessed exclusively via short-lived (5-minute) signed URLs by Super Administrators.
-8. **Countries as Data**: Jurisdiction configuration (currency, KYC document rules, loan eligibility, and sanctions screening) is driven dynamically by the `countries` table. Sanctioned jurisdictions are strictly blocked.
-9. **Internationalization Ready**: All user-facing copy is decoupled into centralized translation dictionaries (`apps/web/src/translations/`).
+### Platform Rules
+1. **Integer Minor Units**: All monetary values are strictly represented as integers in minor units (e.g., cents, pence) accompanied by standard ISO-4217 currency codes. Floating point arithmetic is forbidden.
+2. **Immutable Double-Entry Ledger**: Every balance adjustment creates balanced debit and credit entries in `ledger_transactions` and `ledger_entries`. Ledger rows cannot be updated or deleted; errors are corrected exclusively via explicit reversing entries.
+3. **Strict Server-Side Roles Guard**: Rigid role separation between `MEMBER` and `SUPER_ADMIN`. Every administrative endpoint enforces server-side role validation, rejecting unprivileged requests with `HTTP 403 Forbidden`.
+4. **Immutable Audit Trail**: Every administrative action writes an `audit_logs` record containing actor, action, target, before/after state snapshots, client IP address, and UTC timestamp.
+5. **Private Document Storage**: Identity documents (KYC) are encrypted with AES-256-GCM and stored in private buckets. Documents are accessed exclusively via short-lived (5-minute) signed URLs by Super Administrators.
+6. **Countries as Data**: Jurisdiction configuration (currency, KYC document rules, loan eligibility, and sanctions screening) is driven dynamically by the `countries` table. Sanctioned jurisdictions are strictly blocked.
+7. **Internationalization Ready**: All user-facing copy is decoupled into centralized translation dictionaries (`apps/web/src/translations/`).
 
 ---
 
@@ -91,7 +87,7 @@ npm run build
    - Establish For-Benefit-Of (FBO) depository accounts at the partner bank to hold client funds.
    - Configure FDIC / FSCS pass-through deposit insurance agreements.
 3. **Production KYC/AML & Sanctions Screening**:
-   - Replace sandbox screening with an accredited identity verification vendor (e.g., Persona, Veriff, Alloy, or Socure).
+   - Connect an accredited identity verification vendor (e.g., Persona, Veriff, Alloy, or Socure).
    - Implement real-time OFAC, PEP, and EU/UK consolidated watchlist screening via automated webhooks.
    - Deploy automated liveness biometrics and document tamper detection.
 4. **Real Payment Rails Integration**:

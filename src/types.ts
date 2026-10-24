@@ -1,6 +1,6 @@
 export type Currency = 'USD' | 'CAD' | 'GBP' | 'EUR';
 
-export type AppView = 'landing' | 'member' | 'admin';
+export type AppView = 'landing' | 'member' | 'admin' | 'contact';
 
 export type MemberTab =
   | 'overview'
@@ -154,7 +154,7 @@ export interface CountryServiceInfo {
   mortgageEnabled: boolean;
   cardsEnabled: boolean;
   enabled?: boolean;
-  status?: 'Live Sandbox' | 'Partner Underwriting';
+  status?: 'Active' | 'Partner Underwriting';
   isSanctioned?: boolean;
   sanctionReason?: string | null;
 }

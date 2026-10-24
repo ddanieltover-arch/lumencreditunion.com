@@ -30,6 +30,7 @@ export interface UserRecord {
   email: string;
   passwordHash: string;
   fullName: string;
+  phone: string | null;
   countryCode: string;
   dateOfBirth: string;
   role: UserRole;
@@ -120,6 +121,7 @@ export class AuthService {
       email: adminEmail,
       passwordHash,
       fullName: 'Super Administrator',
+      phone: null,
       countryCode: 'US',
       dateOfBirth: '1985-05-15',
       role: 'SUPER_ADMIN',
@@ -167,6 +169,7 @@ export class AuthService {
       email: memberEmail,
       passwordHash,
       fullName: 'Amara Okafor',
+      phone: '+1 415 555 0142',
       countryCode: 'US',
       dateOfBirth: '1992-04-10',
       role: 'MEMBER',
@@ -224,6 +227,7 @@ export class AuthService {
       email: emailLower,
       passwordHash,
       fullName: validated.fullName,
+      phone: validated.phone.trim(),
       countryCode: validated.countryCode.toUpperCase(),
       dateOfBirth: validated.dateOfBirth,
       role: validated.role || 'MEMBER',

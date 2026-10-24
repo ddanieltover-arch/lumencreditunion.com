@@ -71,6 +71,7 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
         fullName: 'Jordan V. Taylor',
         email: memberEmail,
         password: memberPassword,
+        phone: '+1 415 555 0188',
         countryCode: 'US',
         dateOfBirth: '1992-05-14',
       }),

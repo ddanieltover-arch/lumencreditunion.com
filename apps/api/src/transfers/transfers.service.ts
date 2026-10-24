@@ -1093,7 +1093,6 @@ export class TransfersService {
   <title>Lumenfield Transfer Receipt - ${transfer.reference}</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0E1B1F; margin: 40px; background: #fff; line-height: 1.5; }
-    .banner { background: #FFF1CC; color: #5A4100; padding: 12px 18px; border-radius: 8px; border: 1px solid #F0D58A; font-size: 13px; font-weight: 600; margin-bottom: 24px; text-align: center; }
     .card { max-width: 620px; margin: 0 auto; border: 1px solid #DCE5E3; border-radius: 16px; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.03); }
     .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #0A3D3F; padding-bottom: 16px; margin-bottom: 24px; }
     .brand { font-size: 22px; font-weight: 800; color: #0A3D3F; }
@@ -1110,7 +1109,6 @@ export class TransfersService {
   </style>
 </head>
 <body>
-  <div class="banner">Sandbox environment: all balances are test funds, not real money.</div>
   <div class="card">
     <div class="header">
       <div>
@@ -1132,13 +1130,13 @@ export class TransfersService {
       <tr><td class="label">Counterparty</td><td class="value">${counterparty}</td></tr>
       <tr><td class="label">Transfer Type</td><td class="value">${transfer.type}</td></tr>
       <tr><td class="label">Currency</td><td class="value">${transfer.currency}</td></tr>
-      <tr><td class="label">Platform Fee</td><td class="value" style="color: #0A5C47;">$0.00 (Sandbox Free)</td></tr>
+      <tr><td class="label">Platform Fee</td><td class="value" style="color: #0A5C47;">$0.00</td></tr>
       <tr><td class="label">Ledger Transaction ID</td><td class="value" style="font-family: monospace; font-size: 11px;">${transfer.ledgerTransactionId || 'N/A'}</td></tr>
       ${transfer.note ? `<tr><td class="label">Note</td><td class="value">${transfer.note}</td></tr>` : ''}
     </table>
 
     <div class="footer">
-      Notice: Lumenfield is a private financial testbed. Balances represent test sandbox assets. Not an insured bank or chartered depository.
+      Lumenfield Credit Union — Member transfer receipt. www.lumenfieldcu.com
     </div>
   </div>
   <script>window.onload = function() { window.print(); };</script>

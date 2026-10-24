@@ -10,6 +10,7 @@ export {
   DrawerMotion,
   TapScale,
   PanelSwap,
+  CountUp,
   AnimatePresence,
   motion,
 } from './primitives';

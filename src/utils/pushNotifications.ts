@@ -83,9 +83,9 @@ export async function sendWebPushNotification({
 // Convenience dispatchers
 export async function notifyTransferExecuted(recipient: string, amountFormatted: string, isIncoming = false) {
   return sendWebPushNotification({
-    title: isIncoming ? 'Funds Received (Sandbox)' : 'Transfer Completed',
+    title: isIncoming ? 'Funds Received' : 'Transfer Completed',
     body: isIncoming
-      ? `You received ${amountFormatted} from ${recipient}. All balances are test funds.`
+      ? `You received ${amountFormatted} from ${recipient}.`
       : `Your transfer of ${amountFormatted} to ${recipient} has settled on the ledger.`,
     type: 'TRANSFER',
   });
@@ -96,7 +96,7 @@ export async function notifyKycDecision(status: 'APPROVED' | 'REJECTED', reason?
     title: status === 'APPROVED' ? 'Identity Verification Approved' : 'Identity Verification Update',
     body:
       status === 'APPROVED'
-        ? 'Your KYC documents have been verified. Full sandbox wallet capabilities are now unlocked.'
+        ? 'Your KYC documents have been verified. Full wallet capabilities are now unlocked.'
         : `Your KYC submission requires attention: ${reason || 'Please re-upload clearer identity documents.'}`,
     type: 'KYC_DECISION',
   });
@@ -107,8 +107,8 @@ export async function notifyLoanDecision(status: 'APPROVED' | 'REJECTED', amount
     title: status === 'APPROVED' ? 'Loan Application Approved' : 'Loan Application Status',
     body:
       status === 'APPROVED'
-        ? `Congratulations! Your sandbox loan of ${amountFormatted} has been approved and funded to your wallet.`
-        : 'Your loan application could not be approved at this time based on sandbox underwriting criteria.',
+        ? `Congratulations! Your loan of ${amountFormatted} has been approved and funded to your wallet.`
+        : 'Your loan application could not be approved at this time based on underwriting criteria.',
     type: 'LOAN_UPDATE',
   });
 }

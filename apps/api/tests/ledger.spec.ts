@@ -428,7 +428,7 @@ describe('Double-Entry Ledger & Platform Rules', () => {
     const pdfData = ledgerService.exportStatementPdf(memberId);
     const parsed = JSON.parse(pdfData);
     expect(parsed.title).toContain('Lumenfield Sandbox Account Statement');
-    expect(parsed.notice).toContain('Sandbox environment: all balances are test funds, not real money.');
+    expect(parsed.notice).toContain('Lumenfield Credit Union');
     expect(parsed.activity.length).toBeGreaterThanOrEqual(2);
   });
 

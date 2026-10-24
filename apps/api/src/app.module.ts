@@ -122,9 +122,7 @@ export function createApiApp(
       sandboxMode: configService.isSandbox,
       productionMode: configService.isProduction,
       requireSecondApprover: configService.requireSecondApprover,
-      bannerNotice: configService.isSandbox
-        ? 'Sandbox environment: all balances are test funds, not real money.'
-        : 'Lumenfield Credit Union — secure member access.',
+      bannerNotice: 'Lumenfield Credit Union — secure member access.',
       emailDeliveryEnabled: Boolean(process.env.RESEND_API_KEY?.trim()),
     });
   });
@@ -234,7 +232,7 @@ export function createApiApp(
           virtualCards: userCards,
           auditHistory: userAuditLogs,
           legalNotice:
-            'Lumenfield Sandbox Data Export. Generated in accordance with GDPR Article 15 and CCPA rights.',
+            'Lumenfield Credit Union Data Export. Generated in accordance with GDPR Article 15 and CCPA rights.',
         };
 
         res.setHeader('Content-Type', 'application/json');

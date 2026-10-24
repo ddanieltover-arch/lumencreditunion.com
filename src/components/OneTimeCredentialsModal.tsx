@@ -46,7 +46,7 @@ export const OneTimeCredentialsModal: React.FC = () => {
             </div>
             <div>
               <span className="text-[11px] font-bold text-[#0F766E] uppercase tracking-wider">
-                Virtual Card Issued · Sandbox
+                Virtual Card Issued
               </span>
               <h3 id="one-time-creds-title" className="font-display font-bold text-xl text-[#0E1B1F]">
                 One-Time Security Credentials
@@ -79,7 +79,7 @@ export const OneTimeCredentialsModal: React.FC = () => {
             <span className="font-display font-bold text-base tracking-wide">Lumenfield</span>
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-mono font-bold uppercase bg-[#0E1B1F] text-[#F5B942] px-2 py-0.5 rounded">
-                NON-ROUTABLE TEST
+                VIRTUAL
               </span>
             </div>
           </div>
@@ -99,7 +99,7 @@ export const OneTimeCredentialsModal: React.FC = () => {
             </div>
             <div>
               <div className="text-[9px] uppercase tracking-wider text-[#0E1B1F]/60">Type</div>
-              <div>Sandbox Visa</div>
+              <div>Visa</div>
             </div>
           </div>
         </div>

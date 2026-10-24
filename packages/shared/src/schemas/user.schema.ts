@@ -20,6 +20,12 @@ export const RegisterUserSchema = z
       .regex(/[0-9]/, 'Password must contain at least one number')
       .regex(/[^A-Za-z0-9]/, 'Password must contain at least one special character'),
     fullName: z.string().min(2, 'Full name must be at least 2 characters').max(100),
+    phone: z
+      .string()
+      .trim()
+      .min(8, 'Enter a valid phone number')
+      .max(24, 'Phone number is too long')
+      .regex(/^\+?[\d\s().-]{8,24}$/, 'Enter a valid phone number'),
     countryCode: z.string().length(2, 'Country code must be 2 letters').toUpperCase(),
     dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Date of birth must be in YYYY-MM-DD format'),
     role: UserRoleSchema.default('MEMBER'),

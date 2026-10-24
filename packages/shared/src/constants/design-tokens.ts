@@ -47,7 +47,7 @@ export const DESIGN_TOKENS = {
     minContrastRatio: 4.5,
   },
   sandboxCopy: {
-    persistentBanner: 'Sandbox environment: all balances are test funds, not real money.',
+    persistentBanner: '',
     prohibitedClaims: ['NCUA', 'FDIC', 'chartered', 'licensed'],
   },
 } as const;

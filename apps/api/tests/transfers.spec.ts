@@ -41,6 +41,7 @@ describe('Transfers Platform & Acceptance Criteria', () => {
       email: 'test.sender@lumenfield.test',
       passwordHash: 'dummy-hash',
       fullName: 'Test Member',
+      phone: '+1 555 0100',
       countryCode: 'US',
       dateOfBirth: '1990-01-01',
       role: 'MEMBER',
@@ -381,7 +382,7 @@ describe('Transfers Platform & Acceptance Criteria', () => {
       const btcAddress = await transfersService.getCryptoDepositAddress('BTC', senderId);
       expect(btcAddress.isSimulated).toBe(true);
       expect(btcAddress.address).toMatch(/^tb1q/);
-      expect(btcAddress.warningNotice).toContain('SANDBOX SIMULATION');
+      expect(btcAddress.warningNotice).toContain('Crypto deposit address');
       expect(btcAddress.qrCodeDataUrl).toMatch(/^data:image\/png;base64/);
 
       const ethAddress = await transfersService.getCryptoDepositAddress('USDC_SEPOLIA', senderId);
@@ -457,7 +458,7 @@ describe('Transfers Platform & Acceptance Criteria', () => {
 
       const html = transfersService.generateReceiptHtml(tx.id, senderId);
       expect(html).toContain('Lumenfield Transfer Receipt');
-      expect(html).toContain('Sandbox environment: all balances are test funds, not real money.');
+      expect(html).toContain('Lumenfield Credit Union');
       expect(html).toContain(tx.reference);
       expect(html).toContain(tx.receiptNumber);
       expect(html).toContain('$85.00');

@@ -158,7 +158,7 @@ export const AdminPortal: React.FC = () => {
                 Super Administrator Access Required
               </h2>
               <p className="text-xs text-[#4A5B60] mt-2 leading-relaxed">
-                Acceptance Criterion &amp; HARD RULE 5: A <strong>MEMBER</strong> cannot call any admin route.
+                Administrator access is required for this portal.
                 You are currently signed in as <strong>{currentUser?.fullName || 'Anonymous'}</strong> ({currentUser?.role || 'Guest'}).
               </p>
             </div>
@@ -418,7 +418,7 @@ export const AdminPortal: React.FC = () => {
 
           {/* ══════════════════════════════════════════════════════
               OBSERVABILITY: ADMIN DASHBOARD OF KEY COUNTS
-              (Members, Pending KYC, Pending Loans, Total Test Funds)
+              (Members, Pending KYC, Pending Loans, Total Funds)
              ══════════════════════════════════════════════════════ */}
           <section aria-label="Key Platform Observability Metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
             {/* 1. Members Count */}
@@ -487,13 +487,13 @@ export const AdminPortal: React.FC = () => {
               </div>
             </div>
 
-            {/* 4. Total Test Funds */}
+            {/* 4. Total Funds */}
             <div
               onClick={() => setAdminTab('ledger')}
               className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DCE5E3] hover:border-[#0A3D3F] transition-all cursor-pointer shadow-xs flex flex-col justify-between gap-2"
             >
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#4A5B60] uppercase tracking-wider">Total Test Funds</span>
+                <span className="text-xs font-bold text-[#4A5B60] uppercase tracking-wider">Total Funds</span>
                 <div className="w-8 h-8 rounded-lg bg-[#FFF1CC] flex items-center justify-center text-[#5A4100]">
                   <Coins className="w-4 h-4 text-[#F5B942]" />
                 </div>
@@ -727,7 +727,7 @@ export const AdminPortal: React.FC = () => {
                     type="button"
                     onClick={() => {
                       setAmountStr('5000.00');
-                      setReason('Initial test funds for loan and transfer flow testing.');
+                      setReason('Member wallet funding.');
                       showToast('Form cleared.', 'info');
                     }}
                     className="min-h-[50px] px-6 rounded-xl border border-[#BCCAC8] bg-white hover:bg-slate-50 text-[#0E1B1F] font-semibold text-[16px] transition-all cursor-pointer"
@@ -918,8 +918,6 @@ export const AdminPortal: React.FC = () => {
 
           {/* ══════════════════════════════════════════════════════
               VIEW: IDENTITY REVIEWS (KYC ADJUDICATION QUEUE)
-              HARD RULES 5, 6 & 7: Super Admin only, short-lived signed URLs,
-              audit logs on every decision, in-app notifications dispatched.
              ══════════════════════════════════════════════════════ */}
           {adminTab === 'identity_reviews' && (
             <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-6">

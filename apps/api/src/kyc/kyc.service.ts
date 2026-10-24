@@ -53,7 +53,7 @@ export class KycService {
 
     // Seed dummy encrypted passport buffer
     const dummyPassportBuffer = Buffer.from(
-      '%PDF-1.4\n1 0 obj\n<< /Title (US Passport Sandbox Simulation) /Creator (Lumenfield Sandbox) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF',
+      '%PDF-1.4\n1 0 obj\n<< /Title (US Passport) /Creator (Lumenfield Credit Union) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF',
     );
     const fileKey = 'kyc-docs/seed-passport-001';
 

@@ -9,10 +9,15 @@ import {
   DrawerMotion,
   ModalMotion,
   TapScale,
+  CountUp,
+  AnimatePresence,
+  motion,
   MOTION,
+  usePrefersReducedMotion,
 } from '../motion';
 import {
   ArrowRight,
+  ArrowUp,
   ShieldCheck,
   Send,
   Download,
@@ -30,20 +35,21 @@ import {
 } from 'lucide-react';
 
 const NAV_LINKS = [
-  { href: '#services', label: 'Services' },
-  { href: '#how', label: 'How it works' },
-  { href: '#countries', label: 'Countries' },
-  { href: '#security', label: 'Security' },
+  { href: '#services', label: 'Services', kind: 'hash' as const },
+  { href: '#how', label: 'How it works', kind: 'hash' as const },
+  { href: '#visit', label: 'Visit us', kind: 'hash' as const },
+  { href: '#countries', label: 'Countries', kind: 'hash' as const },
+  { href: '#security', label: 'Security', kind: 'hash' as const },
+  { href: '/contact', label: 'Contact', kind: 'route' as const },
 ] as const;
 
 export const LandingPage: React.FC = () => {
   const {
-    setCurrentView,
-    setMemberTab,
-    setAdminTab,
-    activeMember,
     countries,
     currentUser,
+    activeMember,
+    setCurrentView,
+    setMemberTab,
     openAuthModal,
     openSecurityModal,
     openTermsModal,
@@ -54,12 +60,21 @@ export const LandingPage: React.FC = () => {
   const [selectedCountry, setSelectedCountry] = useState<CountryServiceInfo | null>(null);
   const [showTestAccountModal, setShowTestAccountModal] = useState<boolean>(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [showBackToTop, setShowBackToTop] = useState(false);
+  const prefersReducedMotion = usePrefersReducedMotion();
 
   const handleOpenAccount = () => {
     openAuthModal('login');
   };
 
   const closeMobileNav = () => setMobileNavOpen(false);
+
+  const scrollToTop = () => {
+    window.scrollTo({
+      top: 0,
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+    });
+  };
 
   const goMemberTab = (tab: 'transfers' | 'loans') => {
     if (!currentUser) {
@@ -68,15 +83,6 @@ export const LandingPage: React.FC = () => {
     }
     setCurrentView('member');
     setMemberTab(tab);
-  };
-
-  const goAdminFund = () => {
-    if (!currentUser) {
-      openAuthModal('login');
-      return;
-    }
-    setCurrentView('admin');
-    setAdminTab('fund_wallet');
   };
 
   useEffect(() => {
@@ -92,6 +98,13 @@ export const LandingPage: React.FC = () => {
       window.removeEventListener('keydown', onKey);
     };
   }, [mobileNavOpen]);
+
+  useEffect(() => {
+    const onScroll = () => setShowBackToTop(window.scrollY > 480);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   return (
     <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans selection:bg-[#F5B942]/30 selection:text-[#0A3D3F]">
@@ -119,6 +132,12 @@ export const LandingPage: React.FC = () => {
                 <a
                   key={link.href}
                   href={link.href}
+                  onClick={(e) => {
+                    if (link.kind !== 'route') return;
+                    e.preventDefault();
+                    setCurrentView('contact');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
                   className="text-[#D6E8E6] hover:text-white transition-colors py-2"
                 >
                   {link.label}
@@ -225,7 +244,13 @@ export const LandingPage: React.FC = () => {
               <li key={link.href}>
                 <a
                   href={link.href}
-                  onClick={closeMobileNav}
+                  onClick={(e) => {
+                    closeMobileNav();
+                    if (link.kind !== 'route') return;
+                    e.preventDefault();
+                    setCurrentView('contact');
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
                   className="flex items-center min-h-[48px] px-4 rounded-xl text-[15px] font-medium text-[#D6E8E6] hover:text-white hover:bg-white/10 transition-colors"
                 >
                   {link.label}
@@ -286,16 +311,31 @@ export const LandingPage: React.FC = () => {
         </div>
       </DrawerMotion>
 
-      {/* ── HERO SECTION ── */}
-      <section className="bg-[#0A3D3F] text-white px-6 pt-12 pb-24 border-b border-[#0A3D3F]">
-        <div className="max-w-[1200px] mx-auto flex flex-col lg:flex-row items-center gap-14">
-          {/* Left Hero Column */}
+      {/* ── HERO SECTION (branch exterior + member card) ── */}
+      <section className="relative min-h-[min(92vh,880px)] flex items-center text-white overflow-hidden">
+        <motion.img
+          src="/images/branch-exterior.jpg"
+          alt="Lumenfield Credit Union branch exterior"
+          className="absolute inset-0 w-full h-full object-cover object-[center_40%]"
+          initial={prefersReducedMotion ? false : { scale: 1.08 }}
+          animate={prefersReducedMotion ? undefined : { scale: 1 }}
+          transition={{ duration: 8, ease: MOTION.ease.out }}
+        />
+        <div
+          className="absolute inset-0 bg-gradient-to-r from-[#0E1B1F]/94 via-[#0A3D3F]/82 to-[#0A3D3F]/45"
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#0E1B1F]/70 via-transparent to-[#0E1B1F]/20" aria-hidden="true" />
+
+        <div className="relative z-10 w-full max-w-[1200px] mx-auto px-6 pt-20 pb-16 sm:pb-20 flex flex-col lg:flex-row items-center gap-12 lg:gap-14">
           <div className="flex-1 min-w-0 flex flex-col gap-6">
             <FadeUp inView={false} delay={0} duration={MOTION.duration.hero} distance={MOTION.distance.xs}>
-              <div className="inline-flex self-start items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#0F5557] text-[#F5D78E] text-[13px] font-semibold tracking-wide border border-[#2D7A77]/60">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#F5B942]" />
-                Private members, invitation only
-              </div>
+              <p className="font-display font-bold text-2xl sm:text-3xl tracking-tight text-white">
+                Lumenfield
+                <span className="block text-[13px] sm:text-sm font-semibold tracking-[0.18em] uppercase text-[#F5D78E] mt-1">
+                  Credit Union
+                </span>
+              </p>
             </FadeUp>
 
             <FadeUp
@@ -305,41 +345,40 @@ export const LandingPage: React.FC = () => {
               duration={MOTION.duration.hero}
               distance={MOTION.distance.sm}
             >
-              <h1 className="font-display font-bold text-4xl sm:text-5xl lg:text-[58px] leading-[1.08] tracking-[-0.02em]">
+              <h1 className="font-display font-bold text-4xl sm:text-5xl lg:text-[56px] leading-[1.08] tracking-[-0.02em] max-w-[16ch]">
                 Money that moves the way you do.
               </h1>
             </FadeUp>
 
             <FadeUp inView={false} delay={0.16} duration={MOTION.duration.hero} distance={MOTION.distance.sm}>
-              <p className="text-[17px] sm:text-[18px] leading-[1.6] text-[#D6E8E6] max-w-[560px]">
-                One wallet for everyday spending, transfers between members, bank and crypto movements, and loans for your next car or home. Built for members in the USA, Canada, the UK and Europe.
+              <p className="text-[17px] sm:text-[18px] leading-[1.6] text-[#D6E8E6] max-w-[32rem]">
+                Wallets, transfers, virtual cards, and loans for members in the USA, Canada, the UK, and Europe — online and in branch.
               </p>
             </FadeUp>
 
             <FadeUp inView={false} delay={0.24} duration={MOTION.duration.base} distance={MOTION.distance.xs}>
-            <div className="flex flex-wrap items-center gap-3.5 pt-2">
-              <TapScale>
-              <button
-                type="button"
-                onClick={() => setShowTestAccountModal(true)}
-                className="inline-flex items-center justify-center min-h-[50px] px-7 rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-semibold text-[15px] shadow-md transition-all cursor-pointer group"
-              >
-                Open an Account
-                <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-0.5 transition-transform" />
-              </button>
-              </TapScale>
+              <div className="flex flex-wrap items-center gap-3.5 pt-1">
+                <TapScale>
+                  <button
+                    type="button"
+                    onClick={() => setShowTestAccountModal(true)}
+                    className="inline-flex items-center justify-center min-h-[50px] px-7 rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-semibold text-[15px] shadow-md transition-all cursor-pointer group"
+                  >
+                    Open an Account
+                    <ArrowRight className="w-4 h-4 ml-2 group-hover:translate-x-0.5 transition-transform" />
+                  </button>
+                </TapScale>
 
-              <a
-                href="#how"
-                className="inline-flex items-center justify-center min-h-[50px] px-6 rounded-xl border border-[#5E9A97] text-white hover:bg-white/10 font-semibold text-[15px] transition-all"
-              >
-                See how it works
-              </a>
-            </div>
+                <a
+                  href="#visit"
+                  className="inline-flex items-center justify-center min-h-[50px] px-6 rounded-xl border border-white/35 text-white hover:bg-white/10 font-semibold text-[15px] transition-all backdrop-blur-[2px]"
+                >
+                  Visit a branch
+                </a>
+              </div>
             </FadeUp>
           </div>
 
-          {/* Right Hero Column: Interactive Teaser Widget matching Mockup */}
           <FadeUp
             inView={false}
             delay={0.18}
@@ -347,101 +386,103 @@ export const LandingPage: React.FC = () => {
             distance={MOTION.distance.md}
             className="w-full lg:w-[460px] shrink-0"
           >
-          <div className="w-full bg-[#0E1B1F] border border-[#2D7A77] rounded-[24px] p-7 flex flex-col gap-6 shadow-2xl">
-            {/* Top Balance Preview */}
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-xs text-[#5E9A97] font-semibold uppercase tracking-wider">
-                <span>Available balance (test funds)</span>
-                <span className="px-2 py-0.5 rounded bg-[#0A3D3F] text-[#F5D78E] font-mono text-[11px]">
-                  USD
-                </span>
-              </div>
-              <div className="font-display font-bold text-3xl sm:text-4xl text-white tracking-tight">
-                ${activeMember.wallets.USD.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-              </div>
-            </div>
-
-            {/* Quick Actions */}
-            <div className="grid grid-cols-3 gap-2.5">
-              <button
-                type="button"
-                onClick={() => goMemberTab('transfers')}
-                className="flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-[#D6E8E6] hover:text-white transition-all text-xs font-semibold cursor-pointer border border-[#2D7A77]/40"
-              >
-                <Send className="w-4 h-4 text-[#F5B942]" />
-                <span>Send</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => goMemberTab('transfers')}
-                className="flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-[#D6E8E6] hover:text-white transition-all text-xs font-semibold cursor-pointer border border-[#2D7A77]/40"
-              >
-                <Download className="w-4 h-4 text-[#F5B942]" />
-                <span>Receive</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => goMemberTab('loans')}
-                className="flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-[#D6E8E6] hover:text-white transition-all text-xs font-semibold cursor-pointer border border-[#2D7A77]/40"
-              >
-                <Car className="w-4 h-4 text-[#F5B942]" />
-                <span>Apply</span>
-              </button>
-            </div>
-
-            {/* Virtual Card Preview */}
-            <div className="bg-[#F5B942] text-[#0E1B1F] rounded-[18px] p-5 flex flex-col justify-between h-[168px] shadow-lg relative overflow-hidden group transition-transform hover:-translate-y-0.5">
-              {/* Background card texture wave */}
-              <div className="absolute right-0 bottom-0 w-36 h-36 bg-[#0E1B1F]/5 rounded-full blur-xl pointer-events-none" />
-
-              <div className="flex items-center justify-between font-display font-bold text-sm">
-                <span className="tracking-tight text-base">Lumenfield</span>
-                <span className="font-mono text-[10px] uppercase font-bold tracking-widest bg-[#0E1B1F] text-[#F5B942] px-1.5 py-0.5 rounded">
-                  VIRTUAL · TEST
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {/* Chip SVG */}
-                <div className="w-9 h-7 rounded-sm bg-[#5A4100]/25 border border-[#5A4100]/40 flex flex-col justify-center gap-0.5 px-1">
-                  <div className="w-full h-0.5 bg-[#5A4100]/50" />
-                  <div className="w-full h-0.5 bg-[#5A4100]/50" />
+            <div className="w-full bg-[#0E1B1F]/92 border border-[#2D7A77] rounded-[24px] p-7 flex flex-col gap-6 shadow-2xl backdrop-blur-sm">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center justify-between text-xs text-[#5E9A97] font-semibold uppercase tracking-wider">
+                  <span>Available balance</span>
+                  <span className="px-2 py-0.5 rounded bg-[#0A3D3F] text-[#F5D78E] font-mono text-[11px]">
+                    USD
+                  </span>
                 </div>
-                {/* Contactless */}
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#0E1B1F]/70">
-                  <path d="M8.5 16.5a5 5 0 0 1 0-9" />
-                  <path d="M12 19a9 9 0 0 0 0-14" />
-                </svg>
+                <CountUp
+                  value={activeMember.wallets.USD}
+                  prefix="$"
+                  delay={0.35}
+                  duration={0.9}
+                  className="font-display font-bold text-3xl sm:text-4xl text-white tracking-tight tabular-nums"
+                />
               </div>
 
-              <div className="flex items-end justify-between">
-                <div>
-                  <div className="font-mono font-semibold text-base tracking-[0.16em]">
-                    {activeMember.virtualCard.cardNumber}
+              <div className="grid grid-cols-3 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => goMemberTab('transfers')}
+                  className="flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-[#D6E8E6] hover:text-white transition-all text-xs font-semibold cursor-pointer border border-[#2D7A77]/40"
+                >
+                  <Send className="w-4 h-4 text-[#F5B942]" />
+                  <span>Send</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => goMemberTab('transfers')}
+                  className="flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-[#D6E8E6] hover:text-white transition-all text-xs font-semibold cursor-pointer border border-[#2D7A77]/40"
+                >
+                  <Download className="w-4 h-4 text-[#F5B942]" />
+                  <span>Receive</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => goMemberTab('loans')}
+                  className="flex flex-col items-center justify-center gap-1.5 py-3 px-2 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-[#D6E8E6] hover:text-white transition-all text-xs font-semibold cursor-pointer border border-[#2D7A77]/40"
+                >
+                  <Car className="w-4 h-4 text-[#F5B942]" />
+                  <span>Apply</span>
+                </button>
+              </div>
+
+              <motion.div
+                className="bg-[#F5B942] text-[#0E1B1F] rounded-[18px] p-5 flex flex-col justify-between h-[168px] shadow-lg relative overflow-hidden group"
+                whileHover={{ y: -4 }}
+                transition={{ duration: MOTION.duration.fast, ease: MOTION.ease.out }}
+              >
+                <div className="absolute right-0 bottom-0 w-36 h-36 bg-[#0E1B1F]/5 rounded-full blur-xl pointer-events-none" />
+
+                <div className="flex items-center justify-between font-display font-bold text-sm">
+                  <span className="tracking-tight text-base">Lumenfield</span>
+                  <span className="font-mono text-[10px] uppercase font-bold tracking-widest bg-[#0E1B1F] text-[#F5B942] px-1.5 py-0.5 rounded">
+                    VIRTUAL
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-7 rounded-sm bg-[#5A4100]/25 border border-[#5A4100]/40 flex flex-col justify-center gap-0.5 px-1">
+                    <div className="w-full h-0.5 bg-[#5A4100]/50" />
+                    <div className="w-full h-0.5 bg-[#5A4100]/50" />
                   </div>
-                  <div className="text-[11px] font-semibold text-[#0E1B1F]/80 uppercase mt-0.5">
-                    {activeMember.virtualCard.cardholderName}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-[#0E1B1F]/70">
+                    <path d="M8.5 16.5a5 5 0 0 1 0-9" />
+                    <path d="M12 19a9 9 0 0 0 0-14" />
+                  </svg>
+                </div>
+
+                <div className="flex items-end justify-between">
+                  <div>
+                    <div className="font-mono font-semibold text-base tracking-[0.16em]">
+                      {activeMember.virtualCard.cardNumber}
+                    </div>
+                    <div className="text-[11px] font-semibold text-[#0E1B1F]/80 uppercase mt-0.5">
+                      {activeMember.virtualCard.cardholderName}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[9px] uppercase tracking-wider text-[#0E1B1F]/60">Valid Thru</div>
+                    <div className="font-mono font-bold text-xs">{activeMember.virtualCard.expiryDate}</div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-[9px] uppercase tracking-wider text-[#0E1B1F]/60">Valid Thru</div>
-                  <div className="font-mono font-bold text-xs">{activeMember.virtualCard.expiryDate}</div>
-                </div>
+              </motion.div>
+
+              <div className="text-center">
+                <button
+                  type="button"
+                  onClick={handleOpenAccount}
+                  className="text-xs text-[#5E9A97] hover:text-[#D6E8E6] transition-colors underline underline-offset-4 cursor-pointer"
+                >
+                  View member dashboard →
+                </button>
               </div>
             </div>
-
-            <div className="text-center">
-              <button
-                type="button"
-                onClick={handleOpenAccount}
-                className="text-xs text-[#5E9A97] hover:text-[#D6E8E6] transition-colors underline underline-offset-4 cursor-pointer"
-              >
-                View live interactive member dashboard →
-              </button>
-            </div>
-          </div>
           </FadeUp>
         </div>
       </section>
@@ -462,7 +503,7 @@ export const LandingPage: React.FC = () => {
           </FadeUp>
 
           <Stagger className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" stagger={MOTION.stagger.base}>
-            <StaggerItem className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-all shadow-xs">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-colors shadow-xs">
               <div className="w-12 h-12 rounded-xl bg-[#E3F3F1] text-[#0A3D3F] flex items-center justify-center mb-1">
                 <Globe2 className="w-6 h-6 text-[#0F766E]" />
               </div>
@@ -474,7 +515,7 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-all shadow-xs">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-colors shadow-xs">
               <div className="w-12 h-12 rounded-xl bg-[#E3F3F1] text-[#0A3D3F] flex items-center justify-center mb-1">
                 <Send className="w-6 h-6 text-[#0F766E]" />
               </div>
@@ -486,7 +527,7 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-all shadow-xs">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-colors shadow-xs">
               <div className="w-12 h-12 rounded-xl bg-[#E3F3F1] text-[#0A3D3F] flex items-center justify-center mb-1">
                 <Car className="w-6 h-6 text-[#0F766E]" />
               </div>
@@ -498,7 +539,7 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-all shadow-xs">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-colors shadow-xs">
               <div className="w-12 h-12 rounded-xl bg-[#E3F3F1] text-[#0A3D3F] flex items-center justify-center mb-1">
                 <Home className="w-6 h-6 text-[#0F766E]" />
               </div>
@@ -510,7 +551,7 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-all shadow-xs">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-colors shadow-xs">
               <div className="w-12 h-12 rounded-xl bg-[#E3F3F1] text-[#0A3D3F] flex items-center justify-center mb-1">
                 <CreditCard className="w-6 h-6 text-[#0F766E]" />
               </div>
@@ -522,7 +563,7 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-all shadow-xs">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-white border border-[#DCE5E3] rounded-[20px] p-7 flex flex-col gap-3 hover:border-[#0F766E] transition-colors shadow-xs">
               <div className="w-12 h-12 rounded-xl bg-[#E3F3F1] text-[#0A3D3F] flex items-center justify-center mb-1">
                 <FileCheck className="w-6 h-6 text-[#0F766E]" />
               </div>
@@ -550,10 +591,16 @@ export const LandingPage: React.FC = () => {
           </FadeUp>
 
           <Stagger className="grid grid-cols-1 md:grid-cols-3 gap-6" stagger={MOTION.stagger.loose}>
-            <StaggerItem className="bg-[#F4F7F6] border border-[#DCE5E3] rounded-[20px] p-8 flex flex-col gap-4 relative">
-              <div className="w-10 h-10 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-[#F4F7F6] border border-[#DCE5E3] rounded-[20px] p-8 flex flex-col gap-4 relative">
+              <motion.div
+                className="w-10 h-10 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base"
+                initial={{ scale: 0.6, opacity: 0 }}
+                whileInView={{ scale: 1, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.slow, delay: 0.05, ease: MOTION.ease.out }}
+              >
                 1
-              </div>
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#0E1B1F]">
                 Verify your identity
               </h3>
@@ -562,10 +609,16 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-[#F4F7F6] border border-[#DCE5E3] rounded-[20px] p-8 flex flex-col gap-4 relative">
-              <div className="w-10 h-10 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-[#F4F7F6] border border-[#DCE5E3] rounded-[20px] p-8 flex flex-col gap-4 relative">
+              <motion.div
+                className="w-10 h-10 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base"
+                initial={{ scale: 0.6, opacity: 0 }}
+                whileInView={{ scale: 1, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.slow, delay: 0.12, ease: MOTION.ease.out }}
+              >
                 2
-              </div>
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#0E1B1F]">
                 Fund your wallet
               </h3>
@@ -574,10 +627,16 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="bg-[#F4F7F6] border border-[#DCE5E3] rounded-[20px] p-8 flex flex-col gap-4 relative">
-              <div className="w-10 h-10 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base">
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="bg-[#F4F7F6] border border-[#DCE5E3] rounded-[20px] p-8 flex flex-col gap-4 relative">
+              <motion.div
+                className="w-10 h-10 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-base"
+                initial={{ scale: 0.6, opacity: 0 }}
+                whileInView={{ scale: 1, opacity: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.slow, delay: 0.2, ease: MOTION.ease.out }}
+              >
                 3
-              </div>
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#0E1B1F]">
                 Send, spend or borrow
               </h3>
@@ -586,6 +645,55 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
           </Stagger>
+        </div>
+      </section>
+
+      {/* ── VISIT US (full-bleed lobby interior) ── */}
+      <section id="visit" className="relative min-h-[min(72vh,640px)] flex items-end text-white overflow-hidden">
+        <motion.img
+          src="/images/branch-interior.jpg"
+          alt="Lumenfield Credit Union member services lobby"
+          className="absolute inset-0 w-full h-full object-cover object-center"
+          initial={prefersReducedMotion ? false : { scale: 1.06 }}
+          whileInView={prefersReducedMotion ? undefined : { scale: 1 }}
+          viewport={{ once: true, amount: 0.35 }}
+          transition={{ duration: 7, ease: MOTION.ease.out }}
+        />
+        <div
+          className="absolute inset-0 bg-gradient-to-t from-[#0E1B1F]/90 via-[#0A3D3F]/45 to-[#0A3D3F]/20"
+          aria-hidden="true"
+        />
+
+        <div className="relative z-10 w-full max-w-[1200px] mx-auto px-6 py-16 sm:py-20">
+          <div className="flex flex-col gap-4 max-w-xl">
+            <FadeUp distance={MOTION.distance.md}>
+              <span className="text-[13px] font-bold text-[#F5D78E] uppercase tracking-widest">
+                Visit us
+              </span>
+            </FadeUp>
+            <FadeUp delay={0.06} distance={MOTION.distance.md}>
+              <h2 className="font-display font-bold text-3xl sm:text-4xl tracking-[-0.02em] max-w-[18ch]">
+                Real people at the counter. Real help when you need it.
+              </h2>
+            </FadeUp>
+            <FadeUp delay={0.12} distance={MOTION.distance.sm}>
+              <p className="text-[16px] sm:text-[17px] leading-relaxed text-[#D6E8E6] max-w-[32rem]">
+                Stop by a Lumenfield branch for member services, account guidance, and the same products you manage online.
+              </p>
+            </FadeUp>
+            <FadeUp delay={0.18} distance={MOTION.distance.xs}>
+              <TapScale>
+                <button
+                  type="button"
+                  onClick={() => setShowTestAccountModal(true)}
+                  className="mt-2 inline-flex items-center justify-center min-h-[48px] px-6 rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-semibold text-[15px] transition-all cursor-pointer"
+                >
+                  Become a member
+                  <ArrowRight className="w-4 h-4 ml-2" />
+                </button>
+              </TapScale>
+            </FadeUp>
+          </div>
         </div>
       </section>
 
@@ -636,8 +744,15 @@ export const LandingPage: React.FC = () => {
           </FadeUp>
 
           <Stagger className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5" stagger={MOTION.stagger.base}>
-            <StaggerItem className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
-              <ShieldCheck className="w-6 h-6 text-[#F5D78E] mb-1" />
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.base, delay: 0.05, ease: MOTION.ease.out }}
+              >
+                <ShieldCheck className="w-6 h-6 text-[#F5D78E] mb-1" />
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#F5D78E]">
                 Two-step sign-in
               </h3>
@@ -646,8 +761,15 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
-              <Lock className="w-6 h-6 text-[#F5D78E] mb-1" />
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.base, delay: 0.1, ease: MOTION.ease.out }}
+              >
+                <Lock className="w-6 h-6 text-[#F5D78E] mb-1" />
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#F5D78E]">
                 Private document storage
               </h3>
@@ -656,8 +778,15 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
-              <FileText className="w-6 h-6 text-[#F5D78E] mb-1" />
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.base, delay: 0.15, ease: MOTION.ease.out }}
+              >
+                <FileText className="w-6 h-6 text-[#F5D78E] mb-1" />
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#F5D78E]">
                 Double-entry ledger
               </h3>
@@ -666,8 +795,15 @@ export const LandingPage: React.FC = () => {
               </p>
             </StaggerItem>
 
-            <StaggerItem className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
-              <BadgeCheck className="w-6 h-6 text-[#F5D78E] mb-1" />
+            <StaggerItem hoverLift distance={MOTION.distance.md} className="border border-[#2D7A77] rounded-[20px] p-6 flex flex-col gap-2.5 bg-[#0F5557]/40">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.85 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: true }}
+                transition={{ duration: MOTION.duration.base, delay: 0.2, ease: MOTION.ease.out }}
+              >
+                <BadgeCheck className="w-6 h-6 text-[#F5D78E] mb-1" />
+              </motion.div>
               <h3 className="font-display font-bold text-lg text-[#F5D78E]">
                 Full audit trail
               </h3>
@@ -729,6 +865,16 @@ export const LandingPage: React.FC = () => {
               </a>
               <button
                 type="button"
+                onClick={() => {
+                  setCurrentView('contact');
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                }}
+                className="hover:text-white transition-colors cursor-pointer"
+              >
+                Contact
+              </button>
+              <button
+                type="button"
                 onClick={openPrivacyModal}
                 className="hover:text-white transition-colors cursor-pointer"
               >
@@ -741,13 +887,6 @@ export const LandingPage: React.FC = () => {
               >
                 Terms
               </button>
-              <button
-                type="button"
-                onClick={goAdminFund}
-                className="text-[#F5B942] hover:underline cursor-pointer"
-              >
-                Administrator Portal
-              </button>
             </div>
           </div>
 
@@ -755,23 +894,34 @@ export const LandingPage: React.FC = () => {
             <p className="leading-relaxed max-w-3xl">
               Lumenfield Credit Union — digital member banking services for the USA, Canada, UK, and Europe.
             </p>
-            <div className="flex flex-col sm:items-end gap-1">
-              <a
-                href="https://www.lumenfieldcu.com/"
-                className="hover:text-white transition-colors"
-              >
-                www.lumenfieldcu.com
-              </a>
-              <a
-                href="mailto:support@lumenfieldcu.com"
-                className="hover:text-white transition-colors"
-              >
-                support@lumenfieldcu.com
-              </a>
-            </div>
+            <a
+              href="mailto:support@lumenfieldcu.com"
+              className="hover:text-white transition-colors sm:text-right"
+            >
+              support@lumenfieldcu.com
+            </a>
           </div>
         </div>
       </footer>
+
+      <AnimatePresence>
+        {showBackToTop && (
+          <motion.button
+            type="button"
+            key="back-to-top"
+            onClick={scrollToTop}
+            aria-label="Back to top"
+            className="fixed bottom-5 right-5 z-40 inline-flex items-center justify-center w-12 h-12 min-h-[44px] min-w-[44px] rounded-xl bg-[#0A3D3F] text-[#F5B942] border border-[#2D7A77] shadow-lg hover:bg-[#0F5557] cursor-pointer"
+            initial={prefersReducedMotion ? false : { opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={prefersReducedMotion ? undefined : { opacity: 0, y: 8 }}
+            transition={{ duration: MOTION.duration.fast, ease: MOTION.ease.out }}
+            whileTap={prefersReducedMotion ? undefined : { scale: 0.96 }}
+          >
+            <ArrowUp className="w-5 h-5" strokeWidth={2.25} />
+          </motion.button>
+        )}
+      </AnimatePresence>
 
       <ModalMotion
         open={!!selectedCountry}

@@ -1,6 +1,6 @@
 # Lumenfield Architecture & Technical Specifications
 
-This document outlines the system architecture, security invariants, double-entry ledger design, and compliance rules of the **Lumenfield Private Financial Sandbox & Lending Platform**.
+This document outlines the system architecture, security invariants, double-entry ledger design, and compliance rules of the **Lumenfield Credit Union** platform.
 
 ---
 

@@ -69,7 +69,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
           <div className="flex items-center justify-between">
             <h2 className="font-display font-bold text-lg text-[#0E1B1F]">Virtual card</h2>
             <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-[#E3F3F1] text-[#0A4F4A]">
-              Sandbox
+              Virtual
             </span>
           </div>
 
@@ -117,7 +117,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
         {/* Card Visual (Matches Dashboard Reference Component) */}
         <div
           onClick={() => openSimulatePurchaseModal(activeCard)}
-          title="Click to simulate test purchase"
+          title="Make a card purchase"
           className="bg-gradient-to-br from-[#F5B942] to-[#E5A832] text-[#0E1B1F] rounded-[18px] p-5 flex flex-col justify-between h-[156px] shadow-sm hover:shadow-md transition-all relative overflow-hidden cursor-pointer border border-[#DE9E22]"
         >
           <div className="flex justify-between items-center font-display font-bold text-[15px]">
@@ -194,7 +194,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
             className="inline-flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-bold text-xs transition-all cursor-pointer shadow-2xs"
           >
             <ShoppingCart className="w-3.5 h-3.5" />
-            <span>Simulate</span>
+            <span>Purchase</span>
           </button>
         </div>
       </div>
@@ -309,7 +309,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                 <Shield className="w-4 h-4 text-[#0F766E] shrink-0 mt-0.5" />
                 <span>
                   <strong>Strict Privacy:</strong> The full PAN and CVV are never stored in Lumenfield and were
-                  displayed only once on creation. Purchases are simulated through tokenized rails.
+                  displayed only once on creation. Purchases are authorized through tokenized rails.
                 </span>
               </div>
 
@@ -396,7 +396,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                   className="inline-flex items-center justify-center gap-1.5 min-h-[44px] rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] font-bold text-xs transition cursor-pointer shadow-xs"
                 >
                   <ShoppingCart className="w-3.5 h-3.5" />
-                  <span>Simulate Tx</span>
+                  <span>Purchase</span>
                 </button>
               </div>
             </div>
@@ -410,7 +410,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                   No {selectedCurrency} Virtual Card
                 </h3>
                 <p className="text-xs text-[#4A5B60] mt-1 max-w-sm">
-                  You can issue a dedicated sandbox virtual card for your {selectedCurrency} wallet balance (
+                  You can issue a dedicated virtual card for your {selectedCurrency} wallet balance (
                   {currencySymbol}
                   {walletBalance.toFixed(2)} available).
                 </p>
@@ -435,7 +435,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                 Card Purchase Activity
               </h3>
               <p className="text-xs text-[#4A5B60] mt-0.5">
-                Simulated point-of-sale and e-commerce authorizations posted to the double-entry ledger.
+                Point-of-sale and e-commerce authorizations posted to the double-entry ledger.
               </p>
             </div>
 
@@ -524,7 +524,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
               <Clock className="w-8 h-8 text-[#8FA5A3]" />
               <div className="text-sm font-semibold text-[#0E1B1F]">No purchases recorded yet</div>
               <p className="text-xs text-[#4A5B60] max-w-sm">
-                Use the <strong>Simulate Tx</strong> button to execute test merchant debits and verify
+                Use the <strong>Purchase</strong> button to execute merchant debits and verify
                 server-side limits and ledger balance debits.
               </p>
               {activeCard && (
@@ -533,7 +533,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                   onClick={() => openSimulatePurchaseModal(activeCard)}
                   className="mt-1 px-4 py-2 rounded-xl bg-[#F5B942] hover:bg-[#f0b033] text-[#0E1B1F] text-xs font-bold transition shadow-xs cursor-pointer"
                 >
-                  Simulate First Purchase
+                  Make First Purchase
                 </button>
               )}
             </div>

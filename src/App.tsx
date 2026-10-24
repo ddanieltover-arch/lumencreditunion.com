@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { LandingPage } from './components/LandingPage';
+import { ContactPage } from './components/ContactPage';
 import { MemberDashboard } from './components/MemberDashboard';
 import { AdminPortal } from './components/AdminPortal';
 import { ToastContainer } from './components/ToastContainer';
@@ -74,6 +75,7 @@ const MainAppContent: React.FC = () => {
     <div className="min-h-screen flex flex-col bg-[#F4F7F6]">
       <div className="flex-1 flex flex-col">
         {currentView === 'landing' && <LandingPage />}
+        {currentView === 'contact' && <ContactPage />}
         {currentView === 'member' && <MemberDashboard />}
         {currentView === 'admin' && <AdminPortal />}
       </div>

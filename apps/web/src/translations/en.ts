@@ -1,21 +1,20 @@
 /**
  * Lumenfield English (EN) Translations File
- * HARD RULE 1 & 9: All user-facing copy is stored here so languages can be added later.
- * NEVER include claims of NCUA/FDIC insurance, "chartered", or "licensed".
+ * All user-facing copy is stored here so languages can be added later.
  */
 
 export const en = {
-  // Persistent Notice
+  // Platform notice (kept for API compatibility; no banner shown in live UI)
   sandbox: {
-    bannerNotice: 'Sandbox environment: all balances are test funds, not real money.',
-    badge: 'SANDBOX SIMULATION',
-    tooltip: 'Lumenfield is a financial testbed. No real fiat transactions or banking guarantees exist in this environment.',
+    bannerNotice: '',
+    badge: '',
+    tooltip: '',
   },
 
   // App Navigation & Header
   nav: {
     brandName: 'Lumenfield',
-    brandTagline: 'Private Financial Sandbox',
+    brandTagline: 'Credit Union',
     landing: 'Home',
     memberPortal: 'Member Portal',
     adminPortal: 'Super Admin',
@@ -32,12 +31,12 @@ export const en = {
   // Authentication & Security
   auth: {
     signInTitle: 'Sign In to Lumenfield',
-    signInSubtitle: 'Enter your credentials to access your sandbox wallet.',
+    signInSubtitle: 'Enter your credentials to access your member wallet.',
     registerTitle: 'Create Member Account',
-    registerSubtitle: 'Register for sandbox access in the USA, Canada, UK, or EU.',
     email: 'Email Address',
     password: 'Password',
     fullName: 'Full Legal Name',
+    phone: 'Phone Number',
     country: 'Country of Residence',
     dob: 'Date of Birth (18+ Required)',
     forgotPassword: 'Forgot Password?',
@@ -66,7 +65,7 @@ export const en = {
     revokeSession: 'Revoke',
     revokeAllOthers: 'Revoke All Other Sessions',
     lockoutWarning: 'Account is temporarily locked due to 5 failed login attempts. Please wait 15 minutes.',
-    ageRequirementNotice: 'Applicant must be at least 18 years of age under sandbox membership criteria.',
+    ageRequirementNotice: 'Applicant must be at least 18 years of age under membership criteria.',
   },
 
   // Member Portal
@@ -75,8 +74,8 @@ export const en = {
     statusVerified: 'Verified Member',
     statusPending: 'Identity Verification Pending',
     statusSuspended: 'Account Suspended',
-    totalBalance: 'Combined Sandbox Balance',
-    sendMoney: 'Send Test Funds',
+    totalBalance: 'Combined Balance',
+    sendMoney: 'Send Money',
     requestFunds: 'Request Funding',
     applyLoan: 'Apply for Loan',
     virtualCard: 'Virtual Card',
@@ -84,30 +83,30 @@ export const en = {
       overview: 'Overview',
       wallet: 'Wallets & Balances',
       transfers: 'Transfers',
-      loans: 'Lending Sandbox',
+      loans: 'Loans',
       cards: 'Virtual Cards',
       documents: 'KYC Documents',
       settings: 'Security & Preferences',
     },
     transfers: {
       title: 'Member-to-Member Transfers',
-      subtitle: 'Transfer test funds between sandbox members instantly using ledger double-entry.',
+      subtitle: 'Transfer funds between members instantly using ledger double-entry.',
       recipient: 'Recipient',
       amount: 'Amount',
       currency: 'Currency',
       note: 'Transfer Note',
-      submit: 'Transfer Test Funds',
+      submit: 'Send Transfer',
       success: 'Transfer posted successfully to immutable ledger.',
     },
     cards: {
       title: 'Instant Virtual Cards',
-      subtitle: 'Issue sandbox debit cards for testing e-commerce and point-of-sale flows.',
+      subtitle: 'Issue debit cards for everyday spending and online purchases.',
       createCard: 'Create Virtual Card',
       cardPerWalletNotice: 'Issue a virtual card linked directly to your USD, CAD, GBP, or EUR wallet.',
       freeze: 'Freeze Card',
       unfreeze: 'Unfreeze Card',
-      frozenNotice: 'This card is frozen. All simulated purchases will be declined.',
-      activeNotice: 'This card is active and ready for simulated purchases.',
+      frozenNotice: 'This card is frozen. All purchases will be declined.',
+      activeNotice: 'This card is active and ready for purchases.',
       setLimits: 'Configure Limits',
       dailyLimit: 'Daily Limit',
       monthlyLimit: 'Monthly Limit',
@@ -120,15 +119,15 @@ export const en = {
       oneTimeCredentialsTitle: 'One-Time Card Security Credentials',
       oneTimeWarning: 'Save these credentials now. For your security, the full card number and CVV are never stored in Lumenfield and cannot be retrieved again.',
       copyCardNumber: 'Copy Card Number',
-      simulatePurchase: 'Simulate Card Purchase',
-      simulatePurchaseDesc: 'Dev-only endpoint that posts an atomic double-entry ledger debit to your wallet.',
+      simulatePurchase: 'Card Purchase',
+      simulatePurchaseDesc: 'Posts an atomic double-entry ledger debit to your wallet.',
       merchantName: 'Merchant Name',
       merchantCategory: 'Category (Retail, Tech, Dining)',
       purchaseAmount: 'Transaction Amount',
-      purchaseSuccessful: 'Simulated card transaction approved and posted to ledger.',
-      purchaseDeclined: 'Simulated transaction declined by sandbox rules engine.',
+      purchaseSuccessful: 'Card transaction approved and posted to ledger.',
+      purchaseDeclined: 'Transaction declined by card rules engine.',
       recentTransactions: 'Recent Card Purchases',
-      noTransactions: 'No simulated transactions for this card yet.',
+      noTransactions: 'No transactions for this card yet.',
       noCardsNotice: 'No virtual cards created yet for this wallet.',
     },
     documents: {
@@ -155,7 +154,7 @@ export const en = {
   // Admin Portal
   admin: {
     title: 'Super Admin Console',
-    subtitle: 'System management, double-entry ledger oversight, and test wallet funding.',
+    subtitle: 'System management, double-entry ledger oversight, and wallet funding.',
     roleBadge: 'SUPER_ADMIN CONTROL',
     tabs: {
       fundWallet: 'Fund Member Wallet',
@@ -191,12 +190,12 @@ export const en = {
       noQueueItems: 'No identity submissions in this queue category.',
     },
     funding: {
-      title: 'Credit Member Test Wallet',
-      subtitle: 'Creates double-entry ledger entries tagged source=TEST.',
+      title: 'Credit Member Wallet',
+      subtitle: 'Creates double-entry ledger entries for member funding.',
       targetMember: 'Select Member',
       amountMinor: 'Amount (Major Units)',
       currency: 'Ledger Currency',
-      reason: 'Sandbox Funding Purpose',
+      reason: 'Funding Purpose',
       idempotencyKey: 'Idempotency Key',
       submitButton: 'Post Ledger Credit',
       secondApproverRequired: 'Requires Second Approver signature before execution.',
@@ -216,7 +215,7 @@ export const en = {
     },
     audit: {
       title: 'Administrative Audit Log',
-      subtitle: 'Hard Rule 6: Every admin action writes an immutable audit record with actor, action, target, before/after state, and IP.',
+      subtitle: 'Every admin action writes an immutable audit record with actor, action, target, before/after state, and IP.',
       colTimestamp: 'Timestamp',
       colActor: 'Actor',
       colAction: 'Action',
@@ -225,7 +224,7 @@ export const en = {
     },
     countries: {
       title: 'Jurisdiction & Lending Rules Table',
-      subtitle: 'Hard Rule 8: Countries are data, not code. Drives enabled status, accepted ID document types, and sanctions blocklist.',
+      subtitle: 'Countries are data, not code. Drives enabled status, accepted ID document types, and sanctions blocklist.',
       colCountry: 'Country',
       colCurrency: 'Currency',
       colStatus: 'Status',

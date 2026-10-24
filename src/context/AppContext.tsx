@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import {
   AppView,
   MemberTab,
@@ -206,8 +206,39 @@ interface AppContextType {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+function viewFromPath(pathname: string): AppView {
+  if (pathname === '/admin' || pathname === '/admin/') return 'admin';
+  if (pathname === '/member' || pathname === '/member/') return 'member';
+  if (pathname === '/contact' || pathname === '/contact/') return 'contact';
+  return 'landing';
+}
+
+function pathFromView(view: AppView): string {
+  if (view === 'admin') return '/admin';
+  if (view === 'member') return '/member';
+  if (view === 'contact') return '/contact';
+  return '/';
+}
+
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentView, setCurrentView] = useState<AppView>('landing');
+  const [currentView, setCurrentViewState] = useState<AppView>(() =>
+    typeof window !== 'undefined' ? viewFromPath(window.location.pathname) : 'landing',
+  );
+  const setCurrentView = useCallback((view: AppView) => {
+    setCurrentViewState(view);
+    if (typeof window === 'undefined') return;
+    const next = pathFromView(view);
+    if (window.location.pathname !== next) {
+      window.history.pushState({}, '', next);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setCurrentViewState(viewFromPath(window.location.pathname));
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   const [memberTab, setMemberTab] = useState<MemberTab>('overview');
   const [adminTab, setAdminTab] = useState<AdminTab>('fund_wallet');
 
@@ -302,7 +333,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             ...c,
             id: c.id || `c-${c.code.toLowerCase()}`,
             acceptedDocs: c.acceptedDocs || c.acceptedIdTypes || ['Passport', 'National ID'],
-            status: c.status || 'Live Sandbox',
+            status: c.status || 'Active',
           }));
           setCountries(normalized);
         }
@@ -585,7 +616,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }) => {
     if (currentUser?.role !== 'SUPER_ADMIN') {
       showToast(
-        "Forbidden: role 'MEMBER' lacks permission for this endpoint. (HARD RULE 5: A MEMBER cannot call any admin route)",
+        "Forbidden: administrator access is required for this action.",
         'warning'
       );
       return false;
@@ -626,7 +657,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           currency,
           source: 'TEST',
           reference,
-          reason: reason || 'Sandbox test funds credit.',
+          reason: reason || 'Member wallet credit.',
           idempotencyKey,
         }),
       }).catch((e) => console.error('Server funding sync:', e));
@@ -662,7 +693,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       amount: amount,
       currency: currency,
       type: 'admin_credit',
-      counterparty: 'Sandbox funding pool',
+      counterparty: 'Funding pool',
       reference: reference,
       category: 'Funding',
     };
@@ -674,9 +705,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       reference: reference,
       date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
       timestamp: now.toISOString(),
-      description: reason || 'Sandbox test funds credit.',
+      description: reason || 'Member wallet credit.',
       currency: currency,
-      debitAccount: 'Sandbox funding pool',
+      debitAccount: 'Funding pool',
       debitAmount: amount,
       creditAccount: `Member wallet (${currency})`,
       creditAmount: amount,
@@ -881,7 +912,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   <title>Lumenfield Account Statement</title>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #0E1B1F; margin: 40px; background: #fff; }
-    .banner { background: #FFF1CC; color: #5A4100; padding: 12px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; text-align: center; margin-bottom: 24px; border: 1px solid #F0D58A; }
     .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0A3D3F; padding-bottom: 16px; margin-bottom: 24px; }
     .title { font-size: 24px; font-weight: bold; color: #0A3D3F; }
     table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
@@ -895,16 +925,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   </style>
 </head>
 <body>
-  <div class="banner">Sandbox environment: all balances are test funds, not real money.</div>
   <div class="header">
     <div>
-      <div class="title">Lumenfield Financial Sandbox</div>
+      <div class="title">Lumenfield Credit Union</div>
       <div style="color: #4A5B60; font-size: 14px; margin-top: 4px;">Member: ${activeMember.name} (${activeMember.id})</div>
       <div style="color: #8FA5A3; font-size: 12px;">Country: ${activeMember.country}</div>
     </div>
     <div style="text-align: right; font-size: 13px; color: #4A5B60;">
       <div>Generated: ${new Date().toUTCString()}</div>
-      <div>Status: Sandbox Verified</div>
+      <div>Status: Verified Member</div>
     </div>
   </div>
   <h3>Account Balances</h3>
@@ -928,7 +957,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           <td>${t.date}</td>
           <td style="font-family: monospace;">${t.reference || t.id}</td>
           <td>${t.description}</td>
-          <td>${t.counterparty || 'Sandbox rail'}</td>
+          <td>${t.counterparty || 'Transfer rail'}</td>
           <td>${t.currency}</td>
           <td class="text-right ${t.amount > 0 ? 'credit' : 'debit'}">${t.amount > 0 ? '+' : ''}$${Math.abs(t.amount).toFixed(2)}</td>
           <td>${t.status}</td>
@@ -937,7 +966,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     </tbody>
   </table>
   <div class="footer">
-    Notice: Lumenfield is a private financial testbed. Balances represent test sandbox assets. Not an insured bank or chartered depository.
+    Lumenfield Credit Union — Member account statement. www.lumenfieldcu.com
   </div>
   <script>window.onload = function() { window.print(); };</script>
 </body>
@@ -1673,7 +1702,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setLedgerPostings(INITIAL_LEDGER_POSTINGS);
     setRecentFunding(INITIAL_RECENT_FUNDING);
     setAuditLog(INITIAL_AUDIT_LOG);
-    showToast('Sandbox demo data has been reset to original design state.', 'info');
+    showToast('Account data has been reset.', 'info');
   };
 
   return (

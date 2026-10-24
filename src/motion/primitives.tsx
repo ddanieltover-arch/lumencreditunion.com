@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   motion,
+  animate,
   AnimatePresence,
   type HTMLMotionProps,
   type Variants,
@@ -12,7 +13,7 @@ type DivProps = Omit<HTMLMotionProps<'div'>, 'children'> & {
   children?: React.ReactNode;
 };
 
-const viewOpts = { once: true, amount: 0.2, margin: '0px 0px -40px 0px' as const };
+const viewOpts = { once: true, amount: 0.15, margin: '0px 0px -80px 0px' as const };
 
 function StaticDiv({
   children,
@@ -127,11 +128,12 @@ const staggerContainer = (stagger: number = MOTION.stagger.base): Variants => ({
 });
 
 const staggerItem = (distance: number = MOTION.distance.sm): Variants => ({
-  hidden: { opacity: 0, y: distance },
+  hidden: { opacity: 0, y: distance, scale: 0.97 },
   show: {
     opacity: 1,
     y: 0,
-    transition: { duration: MOTION.duration.base, ease: MOTION.ease.out },
+    scale: 1,
+    transition: { duration: MOTION.duration.slow, ease: MOTION.ease.out },
   },
 });
 
@@ -181,14 +183,25 @@ export function StaggerItem({
   children,
   className,
   distance = MOTION.distance.sm,
+  /** Soft lift on hover — for interactive/marketing cards */
+  hoverLift = false,
   ...rest
-}: DivProps & { distance?: number }) {
+}: DivProps & { distance?: number; hoverLift?: boolean }) {
   const reduced = usePrefersReducedMotion();
   if (reduced) {
     return <StaticDiv className={className}>{children}</StaticDiv>;
   }
   return (
-    <motion.div className={className} variants={staggerItem(distance)} {...rest}>
+    <motion.div
+      className={className}
+      variants={staggerItem(distance)}
+      whileHover={
+        hoverLift
+          ? { y: -6, transition: { duration: MOTION.duration.fast, ease: MOTION.ease.out } }
+          : undefined
+      }
+      {...rest}
+    >
       {children}
     </motion.div>
   );
@@ -360,6 +373,64 @@ export function PanelSwap({
         {children}
       </motion.div>
     </AnimatePresence>
+  );
+}
+
+type CountUpProps = {
+  value: number;
+  prefix?: string;
+  suffix?: string;
+  className?: string;
+  /** Seconds; calm bank-grade default */
+  duration?: number;
+  /** Delay before counting starts */
+  delay?: number;
+  decimals?: number;
+  locale?: string;
+};
+
+/** Currency/number count-up; snaps instantly when reduced-motion is preferred. */
+export function CountUp({
+  value,
+  prefix = '',
+  suffix = '',
+  className,
+  duration = 0.85,
+  delay = 0,
+  decimals = 2,
+  locale = 'en-US',
+}: CountUpProps) {
+  const reduced = usePrefersReducedMotion();
+  const [display, setDisplay] = useState(reduced ? value : 0);
+
+  useEffect(() => {
+    if (reduced) {
+      setDisplay(value);
+      return;
+    }
+
+    setDisplay(0);
+    const controls = animate(0, value, {
+      duration,
+      delay,
+      ease: MOTION.ease.out,
+      onUpdate: (latest) => setDisplay(latest),
+    });
+
+    return () => controls.stop();
+  }, [value, duration, delay, reduced]);
+
+  const formatted = display.toLocaleString(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+
+  return (
+    <span className={className}>
+      {prefix}
+      {formatted}
+      {suffix}
+    </span>
   );
 }
 

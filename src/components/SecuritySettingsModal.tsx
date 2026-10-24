@@ -173,7 +173,7 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
       if (verifyTotpInput.trim().length === 6) {
         setMfaEnabledState(true);
         setMfaSecret(null);
-        showToast('Two-Factor Authentication enrolled in sandbox profile.', 'success');
+        showToast('Two-Factor Authentication enrolled successfully.', 'success');
       } else {
         setErrorMsg(err.message || 'Please enter a 6-digit TOTP code.');
       }
@@ -683,12 +683,12 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
                   title={!savedOldTokenForReplay ? 'Rotate a token first to generate an old invalidated token' : undefined}
                 >
                   <AlertTriangle className="w-4 h-4 text-[#F5B942]" />
-                  <span>2. Simulate Replay Attack</span>
+                  <span>2. Test Session Replay</span>
                 </button>
               </div>
 
               <p className="text-[11px] text-[#4A5B60] text-center">
-                Click <strong>1. Rotate</strong> to issue a new token pair, then click <strong>2. Simulate Replay</strong> to observe immediate session revocation.
+                Click <strong>1. Rotate</strong> to issue a new token pair, then click <strong>2. Test Session Replay</strong> to observe immediate session revocation.
               </p>
             </div>
           )}

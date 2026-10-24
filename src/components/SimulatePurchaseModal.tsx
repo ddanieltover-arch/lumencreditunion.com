@@ -91,7 +91,7 @@ export const SimulatePurchaseModal: React.FC = () => {
 
       setSimulationResult({
         status: 'APPROVED',
-        message: 'Transaction Approved by Sandbox Network',
+        message: 'Transaction Approved',
         authCode: `AUTH_${Math.floor(100000 + Math.random() * 900000)}`,
         ledgerTxId: res.ledgerTransaction?.id || 'LEDG-CARD-TX',
       });
@@ -129,7 +129,7 @@ export const SimulatePurchaseModal: React.FC = () => {
                 Dev-Only Simulation Endpoint
               </span>
               <h3 id="simulate-card-modal-title" className="font-display font-bold text-xl text-[#0E1B1F]">
-                Simulate Card Purchase
+                Card Purchase
               </h3>
             </div>
           </div>
@@ -267,7 +267,7 @@ export const SimulatePurchaseModal: React.FC = () => {
               <span>Authorizing Purchase...</span>
             ) : (
               <>
-                <span>Simulate Purchase ({currencySymbol}{amountStr})</span>
+                <span>Authorize Purchase ({currencySymbol}{amountStr})</span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}

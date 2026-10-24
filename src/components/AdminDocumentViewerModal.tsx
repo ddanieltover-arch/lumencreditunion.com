@@ -113,7 +113,7 @@ export const AdminDocumentViewerModal: React.FC<AdminDocumentViewerModalProps> =
               <ShieldAlert className="w-12 h-12 text-red-500 mx-auto" />
               <h4 className="font-bold text-base text-[#0E1B1F]">Signed URL Expired</h4>
               <p className="text-xs text-[#4A5B60] max-w-sm">
-                HARD RULE 7: Document signed URLs automatically expire after 5 minutes to prevent unauthorized persistence. Please generate a new signed URL from the review queue.
+                Document signed URLs automatically expire after 5 minutes to prevent unauthorized persistence. Please generate a new signed URL from the review queue.
               </p>
             </div>
           ) : isPdf ? (
