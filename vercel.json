@@ -6,7 +6,10 @@
       "framework": "vite",
       "installCommand": "npm install --legacy-peer-deps",
       "buildCommand": "npm run build",
-      "outputDirectory": "dist"
+      "outputDirectory": "dist",
+      "rewrites": [
+        { "source": "/((?!assets/).*)", "destination": "/index.html" }
+      ]
     },
     "api": {
       "root": "apps/api",
@@ -27,8 +30,6 @@
     { "source": "/cards", "destination": { "service": "api" } },
     { "source": "/cards/(.*)", "destination": { "service": "api" } },
     { "source": "/loans/(.*)", "destination": { "service": "api" } },
-    { "source": "/admin", "destination": { "service": "web" } },
-    { "source": "/member", "destination": { "service": "web" } },
     { "source": "/admin/(.+)", "destination": { "service": "api" } },
     { "source": "/(.*)", "destination": { "service": "web" } }
   ]
