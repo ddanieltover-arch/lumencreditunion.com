@@ -38,6 +38,7 @@ function makeChunk(type, data) {
 const BG = [0x0a, 0x3d, 0x3f, 255]; // #0A3D3F Teal
 const AMBER = [0xf5, 0xb9, 0x42, 255]; // #F5B942 Amber
 const MID_TEAL = [0x0f, 0x76, 0x6e, 255]; // #0F766E Teal Mid
+const WHITE = [0xff, 0xff, 0xff, 255]; // #FFFFFF — email wordmark on teal header
 
 function encodePng(width, height, rawData) {
   const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -265,6 +266,7 @@ function renderEmailLogo() {
     I: [[3.5, 0, 3, 14]],
     D: [[0, 0, 3, 14], [0, 0, 7, 3], [0, 11, 7, 3], [6, 2, 3, 10]],
   };
+  // Wordmark is WHITE so it stays readable on the teal email header bar.
   const word = 'LUMENFIELD';
   word.split('').forEach((ch, i) => {
     const rects = glyphs[ch] || [];
@@ -278,16 +280,16 @@ function renderEmailLogo() {
         for (let x = x0; x < x1; x++) {
           if (x < 0 || y < 0 || x >= width || y >= height) continue;
           const pOffset = y * rowBytes + 1 + x * 4;
-          rawData[pOffset] = BG[0];
-          rawData[pOffset + 1] = BG[1];
-          rawData[pOffset + 2] = BG[2];
-          rawData[pOffset + 3] = BG[3];
+          rawData[pOffset] = WHITE[0];
+          rawData[pOffset + 1] = WHITE[1];
+          rawData[pOffset + 2] = WHITE[2];
+          rawData[pOffset + 3] = WHITE[3];
         }
       }
     }
   });
 
-  // Sub-label
+  // Sub-label (also white for contrast on teal header)
   const sub = 'CREDIT UNION';
   const subY = textBaseline + letterH + 8;
   const subLetterW = 6;
@@ -316,10 +318,10 @@ function renderEmailLogo() {
         for (let x = x0; x < x1; x++) {
           if (x < 0 || y < 0 || x >= width || y >= height) continue;
           const pOffset = y * rowBytes + 1 + x * 4;
-          rawData[pOffset] = MID_TEAL[0];
-          rawData[pOffset + 1] = MID_TEAL[1];
-          rawData[pOffset + 2] = MID_TEAL[2];
-          rawData[pOffset + 3] = MID_TEAL[3];
+          rawData[pOffset] = WHITE[0];
+          rawData[pOffset + 1] = WHITE[1];
+          rawData[pOffset + 2] = WHITE[2];
+          rawData[pOffset + 3] = WHITE[3];
         }
       }
     }
