@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import { CreditCard, X, ShieldAlert, AlertCircle, Plus } from 'lucide-react';
 import { CardCurrency } from '@lumenfield/shared';
 
@@ -19,8 +20,6 @@ export const CreateCardModal: React.FC = () => {
   const [monthlyLimitMajor, setMonthlyLimitMajor] = useState<number>(5000);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  if (!isCreateCardModalOpen) return null;
 
   const currencySymbol =
     currency === 'USD' ? '$' : currency === 'CAD' ? 'C$' : currency === 'GBP' ? '£' : '€';
@@ -58,13 +57,13 @@ export const CreateCardModal: React.FC = () => {
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="create-card-modal-title"
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+    <ModalMotion
+      open={isCreateCardModalOpen}
+      onClose={closeCreateCardModal}
+      labelledBy="create-card-modal-title"
+      panelClassName="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
     >
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5">
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -230,7 +229,6 @@ export const CreateCardModal: React.FC = () => {
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalMotion>
   );
 };

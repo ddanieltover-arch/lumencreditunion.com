@@ -1,5 +1,4 @@
 import React from 'react';
-import { SandboxBanner } from './SandboxBanner';
 import { PWAInstallButton } from './PWAInstallButton';
 import { t } from '../translations';
 import { ShieldCheck, UserCheck, LayoutDashboard, Globe2 } from 'lucide-react';
@@ -21,11 +20,8 @@ export const LayoutShell: React.FC<LayoutShellProps> = ({
 }) => {
   return (
     <div className="min-h-screen flex flex-col bg-[#F4F7F6] text-[#0E1B1F] font-sans antialiased selection:bg-[#F5B942] selection:text-[#0E1B1F]">
-      {/* 1. HARD RULE 1: Persistent Sandbox Banner on EVERY page */}
-      <SandboxBanner />
-
-      {/* 2. Top Header Navigation */}
-      <header className="bg-[#0A3D3F] border-b border-[#072F30] text-white shadow-md sticky top-[41px] z-40 transition-colors">
+      {/* Top Header Navigation */}
+      <header className="bg-[#0A3D3F] border-b border-[#072F30] text-white shadow-md sticky top-0 z-40 transition-colors">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Brand Logo & Title */}
@@ -42,11 +38,8 @@ export const LayoutShell: React.FC<LayoutShellProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-display font-bold text-lg text-white tracking-tight">Lumenfield</span>
-                    <span className="text-[10px] uppercase font-mono tracking-wider bg-[#072F30] text-[#F5B942] px-2 py-0.5 rounded-full border border-[#F5B942]/20 font-bold">
-                      SANDBOX
-                    </span>
                   </div>
-                  <p className="text-[11px] text-[#DCE5E3]/80 font-medium">Digital Wallet & Lending Testbed</p>
+                  <p className="text-[11px] text-[#DCE5E3]/80 font-medium">Digital Wallet & Lending</p>
                 </div>
               </button>
             </div>

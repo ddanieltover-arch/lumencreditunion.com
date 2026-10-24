@@ -30,8 +30,19 @@ import {
 } from 'lucide-react';
 import { AdminDocumentViewerModal } from './AdminDocumentViewerModal';
 import { KycSubmission, KycSubmissionStatus } from '../types';
+import {
+  PanelSwap,
+  FadeUp,
+  motion,
+  MOTION,
+  usePrefersReducedMotion,
+} from '../motion';
 
 export const AdminPortal: React.FC = () => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const navIndicatorTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: MOTION.duration.base, ease: MOTION.ease.out };
   const {
     adminTab,
     setAdminTab,
@@ -54,18 +65,15 @@ export const AdminPortal: React.FC = () => {
     fetchAdminKycQueue,
     reviewKycSubmission,
     getAdminDocumentSignedUrl,
-    quickSignInAsAdmin,
   } = useApp();
 
-  // "Fund a wallet" form state matching mockup
-  const [selectedMemberId, setSelectedMemberId] = useState<string>('LF-000124');
-  const [amountStr, setAmountStr] = useState<string>('5000.00');
+  // "Fund a wallet" form state
+  const [selectedMemberId, setSelectedMemberId] = useState<string>('');
+  const [amountStr, setAmountStr] = useState<string>('');
   const [currency, setCurrency] = useState<Currency>('USD');
-  const [fundingSource, setFundingSource] = useState<string>('Test credit (sandbox)');
-  const [reference, setReference] = useState<string>('TEST-2026-10-0001');
-  const [reason, setReason] = useState<string>(
-    'Initial test funds for loan and transfer flow testing.'
-  );
+  const [fundingSource, setFundingSource] = useState<string>('Bank wire');
+  const [reference, setReference] = useState<string>('');
+  const [reason, setReason] = useState<string>('');
   const [confirmed, setConfirmed] = useState<boolean>(true);
   const [memberSearchQuery, setMemberSearchQuery] = useState<string>('');
 
@@ -130,29 +138,13 @@ export const AdminPortal: React.FC = () => {
     if (success) {
       // Generate next reference
       const nextNum = Math.floor(1000 + Math.random() * 9000);
-      setReference(`TEST-2026-10-${nextNum}`);
-    }
-  };
-
-  const handleSourceChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const val = e.target.value;
-    if (val.includes('production only')) {
-      showToast(
-        'Production funding sources (Bank wire, Crypto) are locked while SANDBOX_MODE is active.',
-        'warning'
-      );
-      setFundingSource('Test credit (sandbox)');
-    } else {
-      setFundingSource(val);
+      setReference(`REF-${nextNum}`);
     }
   };
 
   if (currentUser?.role !== 'SUPER_ADMIN') {
     return (
       <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
-        <div className="w-full bg-[#FFF1CC] text-[#5A4100] text-[13px] font-medium leading-tight py-2.5 px-6 text-center border-b border-[#F0D58A]">
-          Sandbox environment: all balances are test funds, not real money.
-        </div>
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-[#DCE5E3] p-8 text-center space-y-5">
             <div className="w-16 h-16 bg-[#FDF2F2] border border-[#D9383A]/30 rounded-2xl flex items-center justify-center mx-auto text-[#D9383A]">
@@ -171,19 +163,13 @@ export const AdminPortal: React.FC = () => {
               </p>
             </div>
 
-            <div className="p-3 bg-[#FFF1CC] rounded-xl border border-[#F0D58A] text-left text-xs text-[#5A4100] space-y-1">
-              <span className="font-bold block">Super Administrator Test Credentials:</span>
-              <p className="font-mono text-[11px]">admin@lumenfield.internal / LumenAdmin2026!#Secure</p>
-              <p className="text-[10px] text-[#4A5B60] mt-1">* Note: Two-Factor Authentication is strictly mandatory for Super Admins.</p>
-            </div>
-
             <div className="space-y-2 pt-2">
               <button
                 type="button"
                 onClick={() => openAuthModal('login')}
                 className="w-full bg-[#0A3D3F] hover:bg-[#072F30] text-white font-bold py-2.5 px-4 rounded-xl shadow-xs transition min-h-[44px] cursor-pointer text-xs"
               >
-                Sign In as Super Admin (with 2FA)
+                Sign in with administrator account
               </button>
               <button
                 type="button"
@@ -204,11 +190,6 @@ export const AdminPortal: React.FC = () => {
 
   return (
     <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
-      {/* ── TOP BANNER (FROM DESIGN) ── */}
-      <div className="w-full bg-[#FFF1CC] text-[#5A4100] text-[13px] font-medium leading-tight py-2.5 px-6 text-center border-b border-[#F0D58A]">
-        Sandbox mode: credits made here are tagged TEST and are not real money.
-      </div>
-
       <div className="flex-1 flex flex-col md:flex-row min-w-0">
         {/* ── ADMIN SIDEBAR (FROM DESIGN) ── */}
         <aside className="w-full md:w-[260px] shrink-0 bg-[#0E1B1F] text-white p-7 md:py-7 md:px-5 flex flex-col justify-between gap-7 border-r border-slate-900">
@@ -235,92 +216,141 @@ export const AdminPortal: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setAdminTab('members')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'members'
-                    ? 'bg-[#1C3436] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <Users className="w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span>Members</span>
+                {adminTab === 'members' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Users className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
+                <span className="relative z-10">Members</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAdminTab('identity_reviews')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'identity_reviews'
-                    ? 'bg-[#1C3436] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <FileCheck className="w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span>Identity reviews</span>
+                {adminTab === 'identity_reviews' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <FileCheck className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
+                <span className="relative z-10">Identity reviews</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAdminTab('fund_wallet')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'fund_wallet'
-                    ? 'bg-[#1C3436] text-white font-semibold shadow-xs'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <Coins className="w-4 h-4 shrink-0 text-[#F5B942]" />
-                <span>Fund wallets</span>
+                {adminTab === 'fund_wallet' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436] shadow-xs"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Coins className="relative z-10 w-4 h-4 shrink-0 text-[#F5B942]" />
+                <span className="relative z-10">Fund wallets</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAdminTab('loan_applications')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'loan_applications'
-                    ? 'bg-[#1C3436] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <Landmark className="w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span>Loan applications</span>
+                {adminTab === 'loan_applications' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Landmark className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
+                <span className="relative z-10">Loan applications</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAdminTab('ledger')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'ledger'
-                    ? 'bg-[#1C3436] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <BookOpen className="w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span>Ledger</span>
+                {adminTab === 'ledger' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <BookOpen className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
+                <span className="relative z-10">Ledger</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAdminTab('audit_log')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'audit_log'
-                    ? 'bg-[#1C3436] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <History className="w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span>Audit log</span>
+                {adminTab === 'audit_log' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <History className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
+                <span className="relative z-10">Audit log</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setAdminTab('country_settings')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   adminTab === 'country_settings'
-                    ? 'bg-[#1C3436] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9D6D5] hover:bg-[#1C3436]/40 hover:text-white'
                 }`}
               >
-                <Globe className="w-4 h-4 shrink-0 text-[#8FA5A3]" />
-                <span>Country settings</span>
+                {adminTab === 'country_settings' && (
+                  <motion.span
+                    layoutId="admin-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#1C3436]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Globe className="relative z-10 w-4 h-4 shrink-0 text-[#8FA5A3]" />
+                <span className="relative z-10">Country settings</span>
               </button>
             </nav>
           </div>
@@ -362,6 +392,7 @@ export const AdminPortal: React.FC = () => {
 
         {/* ── ADMIN WORKSPACE CONTENT ── */}
         <main className="flex-1 min-w-0 p-6 sm:p-8 flex flex-col gap-7 max-w-[1280px]">
+          <PanelSwap panelKey={adminTab} className="flex flex-col gap-7">
           {/* Header */}
           <div className="flex flex-col gap-1">
             <h1 className="font-display font-bold text-2xl sm:text-3xl text-[#0E1B1F] tracking-[-0.01em]">
@@ -407,7 +438,7 @@ export const AdminPortal: React.FC = () => {
                 </div>
                 <div className="text-[11px] text-[#0F766E] font-medium flex items-center gap-1 mt-0.5">
                   <CheckCircle2 className="w-3 h-3" />
-                  <span>{members.filter((m) => m.identityVerified).length} verified sandbox members</span>
+                  <span>{members.filter((m) => m.identityVerified).length} verified members</span>
                 </div>
               </div>
             </div>
@@ -627,19 +658,15 @@ export const AdminPortal: React.FC = () => {
                   <select
                     id="f-source"
                     value={fundingSource}
-                    onChange={handleSourceChange}
+                    onChange={(e) => setFundingSource(e.target.value)}
                     className="min-h-[48px] border border-[#BCCAC8] rounded-xl px-3 text-[15px] text-[#0E1B1F] bg-white font-medium focus:outline-none focus:border-[#0A3D3F]"
                   >
-                    <option value="Test credit (sandbox)">Test credit (sandbox)</option>
-                    <option value="Confirmed bank deposit (production only)">
-                      Confirmed bank deposit (production only) [🔒 Locked]
-                    </option>
-                    <option value="Confirmed crypto deposit (production only)">
-                      Confirmed crypto deposit (production only) [🔒 Locked]
-                    </option>
+                    <option value="Bank wire">Bank wire</option>
+                    <option value="Confirmed bank deposit">Confirmed bank deposit</option>
+                    <option value="Confirmed crypto deposit">Confirmed crypto deposit</option>
                   </select>
                   <span className="text-[13px] text-[#4A5B60] leading-relaxed">
-                    Production sources stay locked until a regulated partner is connected and real deposit references can be matched.
+                    Use a verified deposit reference that matches the incoming funds.
                   </span>
                 </div>
 
@@ -733,7 +760,7 @@ export const AdminPortal: React.FC = () => {
                       <tbody>
                         <tr className="border-b border-[#EDF2F1]">
                           <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
-                            Sandbox funding pool
+                            Funding pool
                           </td>
                           <td className="py-3 px-1.5 text-right font-mono font-semibold">
                             {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -805,7 +832,7 @@ export const AdminPortal: React.FC = () => {
             <div className="bg-white border border-[#DCE5E3] rounded-3xl p-7 shadow-xs flex flex-col gap-5">
               <div className="flex items-center justify-between">
                 <h2 className="font-display font-bold text-xl text-[#0E1B1F]">
-                  Registered Test Members
+                  Registered Members
                 </h2>
                 <span className="text-xs text-[#4A5B60] font-medium">
                   Total: {members.length} members
@@ -825,8 +852,21 @@ export const AdminPortal: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {members.map((m) => (
-                      <tr key={m.id} className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/60">
+                    {members.map((m, memberIndex) => (
+                      <motion.tr
+                        key={m.id}
+                        className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/60"
+                        initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          duration: MOTION.duration.fast,
+                          delay: prefersReducedMotion
+                            ? 0
+                            : Math.min(memberIndex, MOTION.maxStaggerChildren - 1) *
+                              MOTION.stagger.tight,
+                          ease: MOTION.ease.out,
+                        }}
+                      >
                         <td className="py-3.5 px-3 font-semibold text-[#0E1B1F]">
                           <div className="flex items-center gap-2.5">
                             <div className="w-8 h-8 rounded-full bg-[#0A3D3F] text-[#F5B942] flex items-center justify-center font-display font-bold text-xs">
@@ -868,7 +908,7 @@ export const AdminPortal: React.FC = () => {
                             Fund Wallet
                           </button>
                         </td>
-                      </tr>
+                      </motion.tr>
                     ))}
                   </tbody>
                 </table>
@@ -1233,9 +1273,17 @@ export const AdminPortal: React.FC = () => {
               </h2>
 
               <div className="space-y-4">
-                {loanApplications.map((app) => (
-                  <div
+                {loanApplications.map((app, appIndex) => (
+                  <FadeUp
                     key={app.id}
+                    inView={false}
+                    delay={
+                      prefersReducedMotion
+                        ? 0
+                        : Math.min(appIndex, MOTION.maxStaggerChildren - 1) * MOTION.stagger.tight
+                    }
+                    distance={MOTION.distance.xs}
+                    duration={MOTION.duration.fast}
                     className="border border-[#DCE5E3] rounded-2xl p-6 bg-[#F4F7F6]/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-5"
                   >
                     <div className="flex flex-col gap-1">
@@ -1285,7 +1333,7 @@ export const AdminPortal: React.FC = () => {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </FadeUp>
                 ))}
               </div>
             </div>
@@ -1420,6 +1468,7 @@ export const AdminPortal: React.FC = () => {
               </div>
             </div>
           )}
+          </PanelSwap>
         </main>
       </div>
 

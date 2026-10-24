@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
-import { ViewSwitcherBar } from './components/ViewSwitcherBar';
 import { LandingPage } from './components/LandingPage';
 import { MemberDashboard } from './components/MemberDashboard';
 import { AdminPortal } from './components/AdminPortal';
@@ -20,30 +19,72 @@ const MainAppContent: React.FC = () => {
     isAuthModalOpen,
     closeAuthModal,
     authModalMode,
+    authResetToken,
+    openAuthModal,
+    showToast,
     isSecurityModalOpen,
     closeSecurityModal,
   } = useApp();
 
+  // Live email deep-links: ?verifyEmail=… and ?resetToken=…
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const verifyToken = params.get('verifyEmail');
+    const resetToken = params.get('resetToken');
+
+    const clearAuthParams = () => {
+      params.delete('verifyEmail');
+      params.delete('resetToken');
+      const next = params.toString();
+      const url = `${window.location.pathname}${next ? `?${next}` : ''}${window.location.hash}`;
+      window.history.replaceState({}, '', url);
+    };
+
+    if (verifyToken) {
+      clearAuthParams();
+      void (async () => {
+        try {
+          const res = await fetch('/auth/verify-email', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: verifyToken }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.message || 'Email verification failed.');
+          }
+          showToast('Email verified. You can sign in now.', 'success');
+          openAuthModal('login');
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Email verification failed.';
+          showToast(message, 'warning');
+          openAuthModal('login');
+        }
+      })();
+      return;
+    }
+
+    if (resetToken) {
+      clearAuthParams();
+      openAuthModal('reset', resetToken);
+    }
+  }, [openAuthModal, showToast]);
+
   return (
     <div className="min-h-screen flex flex-col bg-[#F4F7F6]">
-      {/* Sandbox banner & View switcher */}
-      <ViewSwitcherBar />
-
-      {/* Main active view from design mockup */}
       <div className="flex-1 flex flex-col">
         {currentView === 'landing' && <LandingPage />}
         {currentView === 'member' && <MemberDashboard />}
         {currentView === 'admin' && <AdminPortal />}
       </div>
 
-      {/* Live notification toasts */}
       <ToastContainer />
 
-      {/* Authentication and Security Modals */}
       <AuthModal
         isOpen={isAuthModalOpen}
         onClose={closeAuthModal}
         initialMode={authModalMode}
+        initialResetToken={authResetToken}
       />
       <SecuritySettingsModal
         isOpen={isSecurityModalOpen}
@@ -51,13 +92,11 @@ const MainAppContent: React.FC = () => {
       />
       <KycVerificationModal />
 
-      {/* Virtual Card Experience Modals */}
       <OneTimeCredentialsModal />
       <CardLimitsModal />
       <SimulatePurchaseModal />
       <CreateCardModal />
 
-      {/* Terms, Privacy, GDPR Data Export & Account Deletion Modals */}
       <LegalModals />
     </div>
   );

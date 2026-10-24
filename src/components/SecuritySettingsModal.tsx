@@ -14,6 +14,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import { t } from '../../apps/web/src/translations';
 
 interface SecuritySettingsModalProps {
@@ -310,17 +311,15 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
     setTimeout(() => setCopiedCodes(false), 2000);
   };
 
-  if (!isOpen) return null;
-
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0E1B1F]/60 backdrop-blur-xs overflow-y-auto"
+    <ModalMotion
+      open={isOpen}
+      onClose={onClose}
+      panelClassName="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-[#DCE5E3] overflow-hidden my-6"
+      overlayClassName="fixed inset-0 flex items-center justify-center p-4 bg-[#0E1B1F]/60 backdrop-blur-xs overflow-y-auto"
     >
-      <div className="relative w-full max-w-2xl bg-white rounded-2xl shadow-2xl border border-[#DCE5E3] overflow-hidden my-6">
         {/* Header */}
         <div className="bg-[#0A3D3F] px-6 py-5 text-white flex items-center justify-between border-b border-[#072F30]">
           <div className="flex items-center gap-3">
@@ -694,7 +693,6 @@ export const SecuritySettingsModal: React.FC<SecuritySettingsModalProps> = ({
             </div>
           )}
         </div>
-      </div>
-    </div>
+    </ModalMotion>
   );
 };

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import {
   CreditCard,
   ShoppingCart,
@@ -49,10 +50,15 @@ export const SimulatePurchaseModal: React.FC = () => {
     declineReason?: string;
   } | null>(null);
 
-  if (!isSimulatePurchaseModalOpen || !card) return null;
-
-  const currencySymbol =
-    card.currency === 'USD' ? '$' : card.currency === 'CAD' ? 'C$' : card.currency === 'GBP' ? '£' : '€';
+  const currencySymbol = card
+    ? card.currency === 'USD'
+      ? '$'
+      : card.currency === 'CAD'
+      ? 'C$'
+      : card.currency === 'GBP'
+      ? '£'
+      : '€'
+    : '$';
 
   const handleApplyPreset = (preset: Preset) => {
     setMerchantName(preset.merchantName);
@@ -100,16 +106,18 @@ export const SimulatePurchaseModal: React.FC = () => {
     }
   };
 
-  const isFrozen = card.status === 'FROZEN';
+  const isFrozen = card?.status === 'FROZEN';
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="simulate-card-modal-title"
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+    <ModalMotion
+      open={isSimulatePurchaseModalOpen && !!card}
+      onClose={closeSimulatePurchaseModal}
+      labelledBy="simulate-card-modal-title"
+      panelClassName="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5 max-h-[90vh] overflow-y-auto"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
     >
-      <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+      {card && (
+      <>
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -309,7 +317,8 @@ export const SimulatePurchaseModal: React.FC = () => {
             )}
           </div>
         )}
-      </div>
-    </div>
+      </>
+      )}
+    </ModalMotion>
   );
 };

@@ -39,6 +39,14 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { VirtualCardsView } from './VirtualCardsView';
+import { PWAInstallButton } from './PWAInstallButton';
+import {
+  PanelSwap,
+  FadeUp,
+  motion,
+  MOTION,
+  usePrefersReducedMotion,
+} from '../motion';
 import {
   requestPushPermission,
   getPushPermissionState,
@@ -48,7 +56,12 @@ import {
 } from '../utils/pushNotifications';
 
 export const MemberDashboard: React.FC = () => {
+  const prefersReducedMotion = usePrefersReducedMotion();
+  const navIndicatorTransition = prefersReducedMotion
+    ? { duration: 0 }
+    : { duration: MOTION.duration.base, ease: MOTION.ease.out };
   const {
+
     memberTab,
     setMemberTab,
     setCurrentView,
@@ -244,11 +257,6 @@ export const MemberDashboard: React.FC = () => {
 
   return (
     <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
-      {/* ── TOP SANDBOX BANNER (FROM DESIGN) ── */}
-      <div className="w-full bg-[#FFF1CC] text-[#5A4100] text-[13px] font-medium leading-tight py-2.5 px-6 text-center border-b border-[#F0D58A]">
-        Sandbox environment: all balances are test funds, not real money.
-      </div>
-
       <div className="flex-1 flex flex-col md:flex-row min-w-0">
         {/* ── SIDEBAR NAVIGATION (FROM DESIGN) ── */}
         <aside className="w-full md:w-[260px] shrink-0 bg-[#0A3D3F] text-white p-7 md:py-7 md:px-5 flex flex-col justify-between gap-7 border-r border-[#072F30]">
@@ -270,92 +278,141 @@ export const MemberDashboard: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setMemberTab('overview')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'overview'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <LayoutDashboard className="w-4 h-4 shrink-0 text-[#F5B942]" />
-                <span>Overview</span>
+                {memberTab === 'overview' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <LayoutDashboard className="relative z-10 w-4 h-4 shrink-0 text-[#F5B942]" />
+                <span className="relative z-10">Overview</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setMemberTab('wallet')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'wallet'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <Wallet className="w-4 h-4 shrink-0" />
-                <span>Wallet</span>
+                {memberTab === 'wallet' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Wallet className="relative z-10 w-4 h-4 shrink-0" />
+                <span className="relative z-10">Wallet</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setMemberTab('transfers')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'transfers'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <ArrowLeftRight className="w-4 h-4 shrink-0" />
-                <span>Transfers</span>
+                {memberTab === 'transfers' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <ArrowLeftRight className="relative z-10 w-4 h-4 shrink-0" />
+                <span className="relative z-10">Transfers</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setMemberTab('loans')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'loans'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <Landmark className="w-4 h-4 shrink-0" />
-                <span>Loans</span>
+                {memberTab === 'loans' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Landmark className="relative z-10 w-4 h-4 shrink-0" />
+                <span className="relative z-10">Loans</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setMemberTab('cards')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'cards'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <CreditCard className="w-4 h-4 shrink-0" />
-                <span>Cards</span>
+                {memberTab === 'cards' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <CreditCard className="relative z-10 w-4 h-4 shrink-0" />
+                <span className="relative z-10">Cards</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setMemberTab('documents')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'documents'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <FileCheck className="w-4 h-4 shrink-0" />
-                <span>Documents</span>
+                {memberTab === 'documents' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <FileCheck className="relative z-10 w-4 h-4 shrink-0" />
+                <span className="relative z-10">Documents</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => setMemberTab('settings')}
-                className={`flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-all cursor-pointer ${
+                className={`relative flex items-center gap-3 min-h-[44px] px-3.5 rounded-[10px] text-left transition-colors duration-200 cursor-pointer ${
                   memberTab === 'settings'
-                    ? 'bg-[#0F5557] text-white font-semibold'
+                    ? 'text-white font-semibold'
                     : 'text-[#C9DEDC] hover:bg-[#0F5557]/40 hover:text-white'
                 }`}
               >
-                <Settings className="w-4 h-4 shrink-0" />
-                <span>Settings</span>
+                {memberTab === 'settings' && (
+                  <motion.span
+                    layoutId="member-nav-active"
+                    className="absolute inset-0 rounded-[10px] bg-[#0F5557]"
+                    transition={navIndicatorTransition}
+                  />
+                )}
+                <Settings className="relative z-10 w-4 h-4 shrink-0" />
+                <span className="relative z-10">Settings</span>
               </button>
             </nav>
           </div>
@@ -371,7 +428,7 @@ export const MemberDashboard: React.FC = () => {
                 </span>
               </div>
               <select
-                aria-label="Select active test member"
+                aria-label="Select active member"
                 value={activeMember.id}
                 onChange={(e) => setActiveMemberId(e.target.value)}
                 className="bg-[#0A3D3F] text-white font-semibold rounded-lg px-2 py-1.5 text-xs border border-[#2D7A77] outline-none cursor-pointer"
@@ -410,7 +467,7 @@ export const MemberDashboard: React.FC = () => {
         {/* ── MAIN CONTENT WORKSPACE ── */}
         <main className="flex-1 min-w-0 p-6 sm:p-8 flex flex-col gap-7 max-w-[1280px]">
           {/* Header Bar */}
-          <div className="flex flex-wrap items-center justify-between gap-4">
+          <PanelSwap panelKey={`hdr-${memberTab}`} className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex flex-col gap-1">
               <h1 className="font-display font-bold text-2xl sm:text-3xl text-[#0E1B1F] tracking-[-0.01em]">
                 {memberTab === 'overview' && `Good morning, ${activeMember.name}`}
@@ -423,12 +480,12 @@ export const MemberDashboard: React.FC = () => {
               </h1>
               <span className="text-[15px] text-[#4A5B60]">
                 {memberTab === 'overview' && 'Here is where your wallet stands today.'}
-                {memberTab === 'wallet' && 'Manage your fiat balances and exchange between currencies in the sandbox.'}
-                {memberTab === 'transfers' && 'Send instant P2P payments, initiate bank withdrawals, or view test rails.'}
+                {memberTab === 'wallet' && 'Manage your fiat balances and exchange between currencies.'}
+                {memberTab === 'transfers' && 'Send instant P2P payments, initiate bank withdrawals, or view transfer rails.'}
                 {memberTab === 'loans' && 'Auto and mortgage loans with fixed terms and transparent payment schedules.'}
                 {memberTab === 'cards' && 'Virtual debit cards with instant freeze protection and custom limits.'}
-                {memberTab === 'documents' && 'Secure sandbox repository for government-issued ID review.'}
-                {memberTab === 'settings' && 'Security, profile, and sandbox configuration.'}
+                {memberTab === 'documents' && 'Secure repository for government-issued ID review.'}
+                {memberTab === 'settings' && 'Security, profile, and account configuration.'}
               </span>
             </div>
 
@@ -446,8 +503,9 @@ export const MemberDashboard: React.FC = () => {
                 </div>
               )}
             </div>
-          </div>
+          </PanelSwap>
 
+          <PanelSwap panelKey={memberTab} className="flex flex-col gap-7">
           {/* ══════════════════════════════════════════════════════
               TAB: OVERVIEW (THE EXACT MOCKUP SCREEN)
              ══════════════════════════════════════════════════════ */}
@@ -459,7 +517,7 @@ export const MemberDashboard: React.FC = () => {
                 <div className="lg:col-span-8 bg-[#0A3D3F] text-white rounded-3xl p-7 flex flex-col justify-between gap-6 shadow-sm border border-[#0F5557]">
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between text-xs font-semibold text-[#D6E8E6] tracking-wide">
-                      <span>Total balance (test funds)</span>
+                      <span>Total balance</span>
                       <span className="px-2.5 py-0.5 rounded-md bg-[#0F5557] text-[#F5D78E] text-[11px] font-mono">
                         USD wallet
                       </span>
@@ -601,13 +659,22 @@ export const MemberDashboard: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredTransactions.map((tx) => {
+                        {filteredTransactions.map((tx, txIndex) => {
                           const isCredit = tx.amount > 0;
+                          const rowDelay =
+                            Math.min(txIndex, MOTION.maxStaggerChildren - 1) * MOTION.stagger.tight;
                           return (
-                            <tr
+                            <motion.tr
                               key={tx.id}
                               onClick={() => setSelectedTx(tx)}
                               className="border-b border-[#EDF2F1] hover:bg-[#F4F7F6]/80 transition-colors cursor-pointer group"
+                              initial={prefersReducedMotion ? false : { opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{
+                                duration: MOTION.duration.fast,
+                                delay: prefersReducedMotion ? 0 : rowDelay,
+                                ease: MOTION.ease.out,
+                              }}
                             >
                               <td className="py-3.5 px-2 font-medium text-[#0E1B1F]">
                                 <div className="flex items-center gap-2">
@@ -638,7 +705,7 @@ export const MemberDashboard: React.FC = () => {
                                   minimumFractionDigits: 2,
                                 })}
                               </td>
-                            </tr>
+                            </motion.tr>
                           );
                         })}
                       </tbody>
@@ -754,7 +821,7 @@ export const MemberDashboard: React.FC = () => {
                         <span className="font-mono text-xs font-bold text-[#0F766E] bg-[#E3F3F1] px-2.5 py-1 rounded-md">
                           {curr}
                         </span>
-                        <span className="text-xs text-[#4A5B60]">Lumenfield Test Balance</span>
+                        <span className="text-xs text-[#4A5B60]">Available balance</span>
                       </div>
                       <div className="font-display font-bold text-3xl text-[#0E1B1F]">
                         {symbol}{bal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -779,10 +846,10 @@ export const MemberDashboard: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-display font-bold text-xl text-[#0E1B1F]">
-                      Sandbox Currency Exchange
+                      Currency exchange
                     </h3>
                     <p className="text-sm text-[#4A5B60] mt-1">
-                      Instantly swap balances between test currencies at real-time sandbox market rates.
+                      Instantly swap balances between currencies at live market rates.
                     </p>
                   </div>
                   <RefreshCw className="w-5 h-5 text-[#0F766E]" />
@@ -937,7 +1004,7 @@ export const MemberDashboard: React.FC = () => {
                       className="w-full min-h-[44px] px-3 border border-[#BCCAC8] rounded-xl text-xs bg-white text-[#0E1B1F] font-semibold focus:outline-none focus:border-[#0A3D3F]"
                     >
                       <option value="ALL">All Source Rails</option>
-                      <option value="TEST">TEST (Sandbox Credit)</option>
+                      <option value="ADMIN_CREDIT">Admin credit</option>
                       <option value="TRANSFER">TRANSFER (P2P)</option>
                       <option value="CARD">CARD (Purchase)</option>
                       <option value="LOAN">LOAN (Disbursement)</option>
@@ -1010,7 +1077,7 @@ export const MemberDashboard: React.FC = () => {
                               </td>
                               <td className="py-3.5 px-3 whitespace-nowrap">
                                 <span className="inline-flex px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-[#E3F3F1] text-[#0A4F4A]">
-                                  {tx.type === 'admin_credit' ? 'TEST' : (tx.type || 'SANDBOX').toUpperCase()}
+                                  {(tx.type || 'TRANSFER').toUpperCase()}
                                 </span>
                               </td>
                               <td className="py-3.5 px-3 whitespace-nowrap">
@@ -1192,17 +1259,17 @@ export const MemberDashboard: React.FC = () => {
 
                   <div className="p-3.5 rounded-xl border border-[#DCE5E3] bg-[#F4F7F6] flex items-center justify-between">
                     <div>
-                      <div className="font-semibold text-[#0E1B1F]">USDC Testnet Rail</div>
-                      <div className="text-xs text-[#4A5B60]">Sepolia · 0x71C...89A2</div>
+                      <div className="font-semibold text-[#0E1B1F]">USDC Rail</div>
+                      <div className="text-xs text-[#4A5B60]">Crypto settlement</div>
                     </div>
                     <span className="text-xs font-semibold text-[#0F766E] bg-[#E3F3F1] px-2 py-0.5 rounded">
-                      Sandbox Active
+                      Active
                     </span>
                   </div>
                 </div>
 
                 <div className="p-4 bg-[#FFF1CC] rounded-xl border border-[#F0D58A] text-xs text-[#5A4100] leading-relaxed">
-                  Real external clearing rails stay in sandbox observation mode until production partner settlement accounts are configured.
+                  External clearing rails settle through partner accounts when configured.
                 </div>
               </div>
             </div>
@@ -1235,9 +1302,17 @@ export const MemberDashboard: React.FC = () => {
                 </div>
 
                 <div className="space-y-4">
-                  {loanApplications.map((app) => (
-                    <div
+                  {loanApplications.map((app, appIndex) => (
+                    <FadeUp
                       key={app.id}
+                      inView={false}
+                      delay={
+                        prefersReducedMotion
+                          ? 0
+                          : Math.min(appIndex, MOTION.maxStaggerChildren - 1) * MOTION.stagger.tight
+                      }
+                      distance={MOTION.distance.xs}
+                      duration={MOTION.duration.fast}
                       className="border border-[#DCE5E3] rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-[#F4F7F6]/50"
                     >
                       <div className="flex flex-col gap-1">
@@ -1275,7 +1350,7 @@ export const MemberDashboard: React.FC = () => {
                           View Schedule
                         </button>
                       </div>
-                    </div>
+                    </FadeUp>
                   ))}
                 </div>
               </div>
@@ -1469,7 +1544,7 @@ export const MemberDashboard: React.FC = () => {
 
                 {/* ── WEB PUSH NOTIFICATIONS (PWA) ── */}
                 <div className="p-5 bg-white rounded-2xl border border-[#DCE5E3] shadow-xs space-y-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-xl bg-[#E3F3F1] flex items-center justify-center text-[#0A3D3F]">
                         <Bell className="w-5 h-5 text-[#0F766E]" />
@@ -1481,6 +1556,7 @@ export const MemberDashboard: React.FC = () => {
                         </p>
                       </div>
                     </div>
+                    <PWAInstallButton />
                     <span
                       className={`px-2.5 py-1 rounded-full text-xs font-bold ${
                         pushPermission === 'granted'
@@ -1516,7 +1592,7 @@ export const MemberDashboard: React.FC = () => {
                   {/* Test notification trigger buttons */}
                   <div className="space-y-1.5 pt-2 border-t border-[#EDF2F1]">
                     <span className="text-[11px] font-bold text-[#4A5B60] uppercase tracking-wider block">
-                      Test Push Delivery (Sandbox Simulation):
+                      Test push delivery:
                     </span>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <button
@@ -1604,7 +1680,7 @@ export const MemberDashboard: React.FC = () => {
                   {/* Legal Terms & Privacy Policy view triggers */}
                   <div className="pt-3 border-t border-[#EDF2F1] flex flex-wrap items-center justify-between gap-3 text-xs">
                     <div className="text-[11px] text-[#4A5B60]">
-                      Regulatory status: <strong className="text-[#0E1B1F]">Sandbox pre-launch testbed</strong>
+                      Regulatory status: <strong className="text-[#0E1B1F]">Member platform</strong>
                     </div>
                     <div className="flex items-center gap-3">
                       <button
@@ -1628,6 +1704,7 @@ export const MemberDashboard: React.FC = () => {
               </div>
             </div>
           )}
+          </PanelSwap>
         </main>
       </div>
 
@@ -2121,9 +2198,9 @@ export const MemberDashboard: React.FC = () => {
               <div className="border-2 border-dashed border-[#BCCAC8] rounded-xl p-6 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6] text-center">
                 <Upload className="w-7 h-7 text-[#0F766E]" />
                 <span className="text-xs font-semibold text-slate-700">
-                  Select sample test scan (PDF, JPG, PNG)
+                  Select document scan (PDF, JPG, PNG)
                 </span>
-                <span className="text-[11px] text-slate-500">Max size 25MB · Encrypted in sandbox</span>
+                <span className="text-[11px] text-slate-500">Max size 25MB · Encrypted at rest</span>
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -2183,7 +2260,7 @@ export const MemberDashboard: React.FC = () => {
             <div className="p-4 bg-red-50/70 rounded-xl border border-red-200 text-xs text-red-800 space-y-2 leading-relaxed">
               <strong className="font-bold block">Irreversible Erasure Notice:</strong>
               <p>
-                Requesting account deletion will immediately suspend your profile and initiate a 30-day statutory holding period. During this time, any remaining sandbox balances will be liquidated and virtual cards terminated.
+                Requesting account deletion will immediately suspend your profile and initiate a 30-day statutory holding period. During this time, any remaining balances will be liquidated and virtual cards terminated.
               </p>
               <p className="text-[11px] text-red-700">
                 Ledger audit records are preserved in immutable pseudonymized form solely for regulatory AML/KYC audit requirements.
@@ -2201,7 +2278,7 @@ export const MemberDashboard: React.FC = () => {
                 className="w-full p-3 border border-[#BCCAC8] rounded-xl text-sm bg-white font-medium"
               >
                 <option value="Moving to another platform">Moving to another financial platform</option>
-                <option value="No longer need sandbox wallet">No longer need sandbox wallet</option>
+                <option value="No longer need this account">No longer need this account</option>
                 <option value="Privacy concerns">Privacy / Data concerns</option>
                 <option value="Other reason">Other reason</option>
               </select>

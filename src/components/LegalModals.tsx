@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shield, AlertTriangle, X, Check, Lock, Download, Trash2, ExternalLink } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 
 export const LegalModals: React.FC = () => {
   const {
@@ -12,21 +13,16 @@ export const LegalModals: React.FC = () => {
     requestAccountDeletion,
   } = useApp();
 
-  if (!isTermsModalOpen && !isPrivacyModalOpen) {
-    return null;
-  }
-
   return (
     <>
       {/* ── TERMS OF SERVICE MODAL ── */}
-      {isTermsModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="terms-title"
-        >
-          <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-[#DCE5E3] overflow-hidden">
+      <ModalMotion
+        open={isTermsModalOpen}
+        onClose={closeTermsModal}
+        labelledBy="terms-title"
+        panelClassName="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-[#DCE5E3] overflow-hidden"
+        overlayClassName="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+      >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#DCE5E3] bg-[#F4F7F6]">
               <div>
@@ -98,19 +94,16 @@ export const LegalModals: React.FC = () => {
                 Close Terms
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </ModalMotion>
 
       {/* ── PRIVACY POLICY MODAL ── */}
-      {isPrivacyModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="privacy-title"
-        >
-          <div className="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-[#DCE5E3] overflow-hidden">
+      <ModalMotion
+        open={isPrivacyModalOpen}
+        onClose={closePrivacyModal}
+        labelledBy="privacy-title"
+        panelClassName="w-full max-w-2xl max-h-[85vh] flex flex-col rounded-2xl bg-white shadow-2xl border border-[#DCE5E3] overflow-hidden"
+        overlayClassName="fixed inset-0 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4"
+      >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-[#DCE5E3] bg-[#F4F7F6]">
               <div>
@@ -214,9 +207,7 @@ export const LegalModals: React.FC = () => {
                 Close Privacy Policy
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </ModalMotion>
     </>
   );
 };

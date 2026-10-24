@@ -12,7 +12,7 @@ export const ConfigSchema = z.object({
   SANDBOX_MODE: z
     .string()
     .optional()
-    .transform((val) => (val === undefined ? true : val.toLowerCase() === 'true')),
+    .transform((val) => (val === undefined ? false : val.toLowerCase() === 'true')),
   PRODUCTION_MODE: z
     .string()
     .optional()

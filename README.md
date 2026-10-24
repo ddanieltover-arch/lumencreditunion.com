@@ -56,24 +56,7 @@ Lumenfield is designed as a web-only Progressive Web App meeting Google Lighthou
 
 ---
 
-## 4. Test Credentials
-
-The sandbox includes pre-seeded demo accounts:
-
-### Super Administrator
-- **Email**: `admin@lumenfield.internal`
-- **Password**: `LumenAdmin2026!#Secure`
-- **MFA Requirement**: Mandatory (TOTP 6-digit code or emergency recovery code)
-- **Role**: `SUPER_ADMIN`
-
-### Pre-Seeded Members
-- **Amara Okafor** (`LF-000089`): `amara.o@lumenfield.test` (USA, Verified)
-- **Jordan Taylor** (`LF-000124`): `jordan.t@lumenfield.test` (USA, Verified)
-- **Liam Tremblay** (`LF-000201`): `liam.t@lumenfield.test` (Canada, Verified)
-
----
-
-## 5. Getting Started & Development
+## 4. Getting Started & Development
 
 ### Installation & Run
 ```bash
@@ -96,7 +79,7 @@ npm run build
 
 ---
 
-## 6. Pre-Production Transition Checklist
+## 5. Pre-Production Transition Checklist
 
 > **CRITICAL**: The following milestones MUST be formally completed and audited before `PRODUCTION_MODE=true` can be enabled or real monetary balances accepted:
 

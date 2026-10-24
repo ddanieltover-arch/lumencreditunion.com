@@ -2,23 +2,18 @@ import { test, expect } from '@playwright/test';
 
 /**
  * Playwright End-to-End Test Suite for Lumenfield
- * Hard Rules & Acceptance Criteria:
- * 1. Persistent sandbox warning banner visible at all times
- * 2. Member registration and login
- * 3. KYC document verification workflow
- * 4. Super Admin funding wallet (tagged source=TEST)
- * 5. Member-to-member transfers with double-entry ledger settlement
- * 6. Member loan application (auto/mortgage)
- * 7. Admin underwriting review and approval
+ * Acceptance Criteria:
+ * 1. Member registration and login
+ * 2. KYC document verification workflow
+ * 3. Super Admin funding wallet (tagged source=TEST)
+ * 4. Member-to-member transfers with double-entry ledger settlement
+ * 5. Member loan application (auto/mortgage)
+ * 6. Admin underwriting review and approval
  */
 
 test.describe('Lumenfield PWA End-to-End User Journeys', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    // Acceptance Rule 1: Persistent sandbox banner
-    await expect(
-      page.getByText(/Sandbox environment: all balances are test funds, not real money/i)
-    ).toBeVisible();
   });
 
   test('User Journey 1: Verify Landing Page & PWA Install Button', async ({ page }) => {

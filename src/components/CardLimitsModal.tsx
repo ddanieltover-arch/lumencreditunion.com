@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import { Sliders, X, AlertCircle } from 'lucide-react';
 import { formatMoney } from '@lumenfield/shared';
 
@@ -25,10 +26,9 @@ export const CardLimitsModal: React.FC = () => {
     }
   }, [selectedCardForLimits]);
 
-  if (!isCardLimitsModalOpen || !selectedCardForLimits) return null;
-
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedCardForLimits) return;
     setError(null);
 
     if (dailyMajor <= 0 || monthlyMajor <= 0) {
@@ -57,22 +57,24 @@ export const CardLimitsModal: React.FC = () => {
   };
 
   const currencySymbol =
-    selectedCardForLimits.currency === 'USD'
+    selectedCardForLimits?.currency === 'USD'
       ? '$'
-      : selectedCardForLimits.currency === 'CAD'
+      : selectedCardForLimits?.currency === 'CAD'
       ? 'C$'
-      : selectedCardForLimits.currency === 'GBP'
+      : selectedCardForLimits?.currency === 'GBP'
       ? '£'
       : '€';
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="card-limits-modal-title"
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+    <ModalMotion
+      open={isCardLimitsModalOpen && !!selectedCardForLimits}
+      onClose={closeCardLimitsModal}
+      labelledBy="card-limits-modal-title"
+      panelClassName="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
     >
-      <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5">
+      {selectedCardForLimits && (
+      <>
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -216,7 +218,8 @@ export const CardLimitsModal: React.FC = () => {
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      </>
+      )}
+    </ModalMotion>
   );
 };

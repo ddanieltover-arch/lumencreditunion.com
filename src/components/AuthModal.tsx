@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   Lock,
@@ -14,18 +14,21 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import { t } from '../../apps/web/src/translations';
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  initialMode?: 'login' | 'register' | 'forgot';
+  initialMode?: 'login' | 'register' | 'forgot' | 'reset';
+  initialResetToken?: string;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   initialMode = 'login',
+  initialResetToken = '',
 }) => {
   const { countries, showToast, loginUser, registerUser, completeMfaLogin, currentUser } = useApp();
 
@@ -38,12 +41,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [countryCode, setCountryCode] = useState('US');
-  const [dateOfBirth, setDateOfBirth] = useState('1995-05-15');
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [totpCode, setTotpCode] = useState('');
   const [mfaTicket, setMfaTicket] = useState('');
-  const [sandboxMfaHint, setSandboxMfaHint] = useState<{ totpCode?: string; recoveryCodes?: string[] } | null>(null);
   const [isRecoveryCodeMode, setIsRecoveryCodeMode] = useState(false);
-  const [resetToken, setResetToken] = useState('');
+  const [resetToken, setResetToken] = useState(initialResetToken);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
@@ -53,7 +55,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [lockoutSec, setLockoutSec] = useState<number | null>(null);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    if (!isOpen) return;
+    setMode(initialMode);
+    if (initialResetToken) {
+      setResetToken(initialResetToken);
+    }
+    setErrorMsg(null);
+    setInfoMsg(null);
+  }, [isOpen, initialMode, initialResetToken]);
 
   // Filter out any sanctioned countries for registration
   const registrationCountries = countries.filter((c) => c.enabled && !c.isSanctioned);
@@ -67,9 +77,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       const res = await loginUser({ email, password, totpCode: totpCode.trim() || undefined });
       if (res.requiresMfa) {
         setMfaTicket(res.mfaTicket);
-        if (res.sandboxMfaHint) {
-          setSandboxMfaHint(res.sandboxMfaHint);
-        }
         setMode('mfa_prompt');
         showToast('Two-Factor Authentication required. Enter code to continue.', 'info');
       } else {
@@ -130,8 +137,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         dateOfBirth,
         role: 'MEMBER',
       });
-      showToast(`Account registered successfully for ${res.user.fullName}!`, 'success');
-      setInfoMsg('Account created! In sandbox simulation, your email has been automatically verified.');
+      showToast(`Account registered for ${res.user.fullName}.`, 'success');
+      setInfoMsg(
+        res.message ||
+          'Account created. Check your email for a verification link before signing in.',
+      );
       setMode('login');
     } catch (err: any) {
       setErrorMsg(err.message || 'Registration failed. Please check form inputs.');
@@ -152,12 +162,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.message || 'Error requesting password reset.');
+      }
+      // Sandbox shortcut only — live mode emails the reset link via Resend
       if (data.sandboxResetToken) {
         setResetToken(data.sandboxResetToken);
         setMode('reset');
         showToast('Password reset token generated (Sandbox mode).', 'info');
       } else {
-        setInfoMsg(data.message || 'Password reset link dispatched.');
+        setInfoMsg(
+          data.message ||
+            'If that email is registered, you will receive password reset instructions shortly.',
+        );
+        showToast('Check your email for reset instructions.', 'info');
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Error requesting password reset.');
@@ -196,13 +214,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="auth-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0E1B1F]/60 backdrop-blur-xs overflow-y-auto"
+    <ModalMotion
+      open={isOpen}
+      onClose={onClose}
+      labelledBy="auth-modal-title"
+      panelClassName="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-[#DCE5E3] overflow-hidden my-8"
+      overlayClassName="fixed inset-0 flex items-center justify-center p-4 bg-[#0E1B1F]/60 backdrop-blur-xs overflow-y-auto"
     >
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-[#DCE5E3] overflow-hidden my-8">
         {/* Header Ribbon */}
         <div className="bg-[#0A3D3F] px-6 py-5 text-white flex items-center justify-between border-b border-[#072F30]">
           <div className="flex items-center gap-3">
@@ -234,12 +252,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           >
             <X className="w-5 h-5" />
           </button>
-        </div>
-
-        {/* Persistent Sandbox Warning inside modal */}
-        <div className="bg-[#FFF1CC] px-4 py-2 text-[11px] font-medium text-[#5A4100] border-b border-[#F0D58A] flex items-center gap-2">
-          <AlertTriangle className="w-3.5 h-3.5 text-[#F5B942] shrink-0" />
-          <span>Sandbox mode: all accounts and credentials operate on test funds only.</span>
         </div>
 
         {/* Notifications & Error banner */}
@@ -276,7 +288,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="member@lumenfield.test"
+                    placeholder="you@example.com"
                     className="w-full pl-10 pr-3 py-2.5 bg-[#F4F7F6] border border-[#DCE5E3] rounded-xl text-sm text-[#0E1B1F] focus:outline-none focus:ring-2 focus:ring-[#0A3D3F] min-h-[44px]"
                   />
                 </div>
@@ -326,37 +338,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </button>
               </div>
 
-              {/* Demo Quick Logins */}
-              <div className="mt-4 pt-4 border-t border-[#DCE5E3] text-xs">
-                <p className="text-[#4A5B60] mb-2 font-medium">Quick Sandbox Logins:</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmail('amara.o@lumenfield.test');
-                      setPassword('Password123!@#');
-                    }}
-                    className="p-2 text-left rounded-lg border border-[#DCE5E3] hover:bg-[#F4F7F6] transition text-[11px] cursor-pointer"
-                  >
-                    <span className="font-bold block text-[#0E1B1F]">Amara O. (US)</span>
-                    <span className="text-[#4A5B60]">Role: MEMBER</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEmail('admin@lumenfield.internal');
-                      setPassword('LumenAdmin2026!#Secure');
-                    }}
-                    className="p-2 text-left rounded-lg border border-[#F5B942] bg-[#FFF1CC]/40 hover:bg-[#FFF1CC] transition text-[11px] cursor-pointer"
-                  >
-                    <span className="font-bold block text-[#0E1B1F]">Admin Console</span>
-                    <span className="text-[#5A4100]">SUPER_ADMIN (MFA)</span>
-                  </button>
-                </div>
-              </div>
-
               <div className="text-center pt-2 text-xs text-[#4A5B60]">
-                <span>Don't have a test account? </span>
+                <span>Don&apos;t have an account? </span>
                 <button
                   type="button"
                   onClick={() => setMode('register')}
@@ -371,51 +354,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {/* 2. TWO-FACTOR AUTHENTICATION PROMPT */}
           {mode === 'mfa_prompt' && (
             <form onSubmit={handleMfaSubmit} className="space-y-4">
-              {/* Sandbox MFA Assistant Banner */}
-              {sandboxMfaHint && (
-                <div className="p-3 bg-[#FFF1CC] border border-[#F0D58A] rounded-xl text-xs space-y-2">
-                  <div className="flex items-center gap-1.5 font-bold text-[#5A4100]">
-                    <ShieldCheck className="w-4 h-4 text-[#0F766E]" />
-                    <span>Sandbox MFA Assistant (Simulated Authenticator)</span>
-                  </div>
-                  {sandboxMfaHint.totpCode && (
-                    <div className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-[#F0D58A]">
-                      <span className="text-[#4A5B60] text-[11px]">Current 6-Digit TOTP:</span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setIsRecoveryCodeMode(false);
-                          setTotpCode(sandboxMfaHint.totpCode || '');
-                        }}
-                        className="font-mono font-bold text-[#0A3D3F] hover:underline cursor-pointer bg-[#F4F7F6] px-2 py-0.5 rounded text-xs"
-                      >
-                        {sandboxMfaHint.totpCode} (Click to fill)
-                      </button>
-                    </div>
-                  )}
-                  {sandboxMfaHint.recoveryCodes && sandboxMfaHint.recoveryCodes.length > 0 && (
-                    <div className="text-[11px] text-[#5A4100]">
-                      <span className="block font-semibold mb-1">Emergency Recovery Codes:</span>
-                      <div className="grid grid-cols-2 gap-1 font-mono">
-                        {sandboxMfaHint.recoveryCodes.slice(0, 2).map((code, idx) => (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => {
-                              setIsRecoveryCodeMode(true);
-                              setTotpCode(code);
-                            }}
-                            className="bg-white hover:bg-white/80 border border-[#F0D58A] p-1 rounded text-center text-[10px] font-bold text-[#0E1B1F] cursor-pointer"
-                          >
-                            {code}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div>
                 <label htmlFor="totp-code" className="block text-xs font-semibold text-[#0E1B1F] mb-1.5">
                   {isRecoveryCodeMode ? 'Emergency Recovery Code (8 Chars)' : '6-Digit TOTP Code'}
@@ -674,7 +612,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </form>
           )}
         </div>
-      </div>
-    </div>
+    </ModalMotion>
   );
 };

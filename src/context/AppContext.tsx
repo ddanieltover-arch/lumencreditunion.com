@@ -158,7 +158,6 @@ interface AppContextType {
     expiresIn?: number
   ) => Promise<{ signedUrl: string; expiresAt: string; expiresInSeconds: number }>;
   markNotificationsRead: () => Promise<void>;
-  quickSignInAsAdmin: () => Promise<void>;
 
   // Authentication & Security state
   currentUser: {
@@ -175,8 +174,9 @@ interface AppContextType {
   refreshToken: string | null;
   setRefreshToken: (token: string | null) => void;
   isAuthModalOpen: boolean;
-  authModalMode: 'login' | 'register' | 'forgot';
-  openAuthModal: (mode?: 'login' | 'register' | 'forgot') => void;
+  authModalMode: 'login' | 'register' | 'forgot' | 'reset';
+  authResetToken: string;
+  openAuthModal: (mode?: 'login' | 'register' | 'forgot' | 'reset', resetToken?: string) => void;
   closeAuthModal: () => void;
   isSecurityModalOpen: boolean;
   openSecurityModal: () => void;
@@ -323,7 +323,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
-  const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'forgot'>('login');
+  const [authModalMode, setAuthModalMode] = useState<'login' | 'register' | 'forgot' | 'reset'>('login');
+  const [authResetToken, setAuthResetToken] = useState('');
   const [isSecurityModalOpen, setIsSecurityModalOpen] = useState(false);
 
   // KYC Verification State (HARD RULE 7 & Task Requirements)
@@ -398,24 +399,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           }
         }
 
-        // Auto-seed initial active demo member session
-        const loginRes = await fetch('/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: 'amara.o@lumenfield.test',
-            password: 'AmaraPass123!#',
-          }),
-        });
-        if (loginRes.ok) {
-          const data = await loginRes.json();
-          if (!data.requiresMfa) {
-            setAuthToken(data.accessToken);
-            setRefreshToken(data.refreshToken);
-            localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
-            setCurrentUser(data.user);
-          }
-        }
+        // Live mode: no auto-login — users must sign in explicitly
       } catch (err) {
         console.debug('[AppContext] Init session:', err);
       }
@@ -424,11 +408,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     initSession();
   }, []);
 
-  const openAuthModal = (mode: 'login' | 'register' | 'forgot' = 'login') => {
+  const openAuthModal = (
+    mode: 'login' | 'register' | 'forgot' | 'reset' = 'login',
+    resetToken = '',
+  ) => {
     setAuthModalMode(mode);
+    setAuthResetToken(resetToken);
     setIsAuthModalOpen(true);
   };
-  const closeAuthModal = () => setIsAuthModalOpen(false);
+  const closeAuthModal = () => {
+    setIsAuthModalOpen(false);
+    setAuthResetToken('');
+  };
 
   const openSecurityModal = () => setIsSecurityModalOpen(true);
   const closeSecurityModal = () => setIsSecurityModalOpen(false);
@@ -535,7 +526,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     localStorage.removeItem('lumenfield_refresh_token');
     setCurrentUser(null);
     setCurrentView('landing');
-    showToast('Signed out of sandbox session.', 'info');
+    showToast('Signed out successfully.', 'info');
   };
 
   const [toasts, setToasts] = useState<ToastInfo[]>([]);
@@ -1418,68 +1409,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (currentUser?.role === 'SUPER_ADMIN' && authToken) {
       return authToken;
     }
-    try {
-      const loginRes = await fetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: 'admin@lumenfield.internal',
-          password: 'LumenAdmin2026!#Secure',
-        }),
-      });
-      const loginData = await loginRes.json();
-      if (loginData.requiresMfa && loginData.sandboxMfaHint?.totpCode) {
-        const mfaRes = await fetch('/auth/mfa-verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mfaTicket: loginData.mfaTicket,
-            totpCode: loginData.sandboxMfaHint.totpCode,
-          }),
-        });
-        const mfaData = await mfaRes.json();
-        return mfaData.accessToken;
-      }
-      return loginData.accessToken || '';
-    } catch (err) {
-      console.debug('Failed to acquire admin token:', err);
-      return '';
-    }
-  };
-
-  const quickSignInAsAdmin = async () => {
-    try {
-      const loginRes = await fetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: 'admin@lumenfield.internal',
-          password: 'LumenAdmin2026!#Secure',
-        }),
-      });
-      const loginData = await loginRes.json();
-      if (loginData.requiresMfa && loginData.sandboxMfaHint?.totpCode) {
-        const mfaRes = await fetch('/auth/mfa-verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mfaTicket: loginData.mfaTicket,
-            totpCode: loginData.sandboxMfaHint.totpCode,
-          }),
-        });
-        const mfaData = await mfaRes.json();
-        setAuthToken(mfaData.accessToken);
-        setRefreshToken(mfaData.refreshToken);
-        localStorage.setItem('lumenfield_refresh_token', mfaData.refreshToken);
-        setCurrentUser(mfaData.user);
-        setCurrentView('admin');
-        setAdminTab('identity_reviews');
-        showToast('Signed in as Super Administrator with verified TOTP.', 'success');
-        fetchAdminKycQueue();
-      }
-    } catch (err: any) {
-      showToast(err.message || 'Failed to authenticate as admin.', 'warning');
-    }
+    return '';
   };
 
   const fetchKycStatus = async () => {
@@ -1627,7 +1557,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       `KYC Submission (${data.id})`,
       data.sanctionsReferenceId || data.id,
       `Super Admin decision: ${decision}. ${reason || 'Adjudication recorded.'}`,
-      'admin@lumenfield.internal',
+      'support@lumenfieldcu.com',
       'Admin'
     );
 
@@ -1810,7 +1740,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         reviewKycSubmission,
         getAdminDocumentSignedUrl,
         markNotificationsRead,
-        quickSignInAsAdmin,
         convertCurrency,
         resetDemoData,
         currentUser,
@@ -1821,6 +1750,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setRefreshToken,
         isAuthModalOpen,
         authModalMode,
+        authResetToken,
         openAuthModal,
         closeAuthModal,
         isSecurityModalOpen,

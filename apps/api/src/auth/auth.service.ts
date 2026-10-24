@@ -23,6 +23,7 @@ import {
 import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '../config/config.service';
 import { CountriesService } from '../countries/countries.service';
+import { EmailService } from '../email/email.service';
 
 export interface UserRecord {
   id: string;
@@ -76,16 +77,27 @@ export class AuthService {
     private readonly auditService: AuditService = new AuditService(),
     private readonly configService: ConfigService = ConfigService.getInstance(),
     private readonly countriesService: CountriesService = new CountriesService(),
+    private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
-    this.seedSuperAdmin();
-    this.seedMemberUser();
+    void this.bootstrapUsers();
+  }
+
+  private async bootstrapUsers() {
+    await this.seedSuperAdmin();
+    // Demo member is only seeded in sandbox mode
+    if (this.configService.isSandbox) {
+      await this.seedMemberUser();
+    }
   }
 
   /**
    * Seed one SUPER_ADMIN from environment variables (or secure defaults)
    */
   public async seedSuperAdmin(): Promise<UserRecord> {
-    const adminEmail = process.env.SUPER_ADMIN_EMAIL || 'admin@lumenfield.internal';
+    const adminEmail =
+      process.env.SUPER_ADMIN_EMAIL ||
+      process.env.SUPPORT_EMAIL ||
+      'support@lumenfieldcu.com';
     const existing = Array.from(this.users.values()).find(
       (u) => u.email.toLowerCase() === adminEmail.toLowerCase(),
     );
@@ -93,7 +105,12 @@ export class AuthService {
       return existing;
     }
 
-    const adminPassword = process.env.SUPER_ADMIN_PASSWORD || 'LumenAdmin2026!#Secure';
+    const adminPassword = process.env.SUPER_ADMIN_PASSWORD;
+    if (!adminPassword) {
+      throw new Error(
+        'SUPER_ADMIN_PASSWORD must be set in the environment before seeding the super administrator.',
+      );
+    }
     const passwordHash = await hashPassword(adminPassword);
     const mfaSecret = generateBase32Secret();
     const recoveryCodes = generateRecoveryCodes(8);
@@ -118,6 +135,15 @@ export class AuthService {
 
     this.users.set(superAdmin.id, superAdmin);
     console.log(`[AuthService] Seeded SUPER_ADMIN: ${adminEmail} (MFA Mandatory: Enabled)`);
+    if (!this.configService.isSandbox) {
+      const issuer = process.env.TOTP_ISSUER || 'Lumenfield';
+      console.log(
+        `[AuthService] LIVE MFA setup for ${adminEmail}\n` +
+          `  TOTP secret: ${mfaSecret}\n` +
+          `  otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(adminEmail)}?secret=${mfaSecret}&issuer=${encodeURIComponent(issuer)}\n` +
+          `  Recovery codes: ${recoveryCodes.join(', ')}`,
+      );
+    }
     return superAdmin;
   }
 
@@ -164,7 +190,8 @@ export class AuthService {
    */
   async register(input: RegisterUserInput, ipAddress: string, userAgent?: string): Promise<{
     user: Omit<UserRecord, 'passwordHash' | 'mfaSecret' | 'mfaRecoveryCodes'>;
-    verificationToken: string;
+    verificationToken?: string;
+    message: string;
   }> {
     const validated = RegisterUserSchema.parse(input);
 
@@ -216,7 +243,15 @@ export class AuthService {
     const verificationToken = crypto.randomBytes(32).toString('hex');
     this.emailVerificationTokens.set(verificationToken, user.id);
 
-    // 5. Audit log
+    // 5. Live mode: send verification email via Resend
+    if (!this.configService.isSandbox) {
+      await this.emailService.sendVerificationEmail(user.email, user.fullName, verificationToken);
+    } else {
+      // Sandbox: auto-verify for faster demos
+      user.emailVerified = true;
+    }
+
+    // 6. Audit log
     await this.auditService.record({
       actorId: user.id,
       actorRole: user.role,
@@ -230,7 +265,14 @@ export class AuthService {
     });
 
     const { passwordHash: _, mfaSecret: __, mfaRecoveryCodes: ___, ...safeUser } = user;
-    return { user: safeUser, verificationToken };
+    return {
+      user: safeUser,
+      // Only expose raw token in sandbox (testers); live users get email instead
+      verificationToken: this.configService.isSandbox ? verificationToken : undefined,
+      message: this.configService.isSandbox
+        ? 'Account created and verified (sandbox).'
+        : 'Account created. Please check your email to verify your address before signing in.',
+    };
   }
 
   /**
@@ -352,6 +394,13 @@ export class AuthService {
     // Reset failed attempts on valid password
     user.failedLoginAttempts = 0;
     user.lockedUntil = null;
+
+    // Live mode: require verified email before issuing a session
+    if (!this.configService.isSandbox && !user.emailVerified) {
+      throw new Error(
+        'Email address is not verified. Please check your inbox for the verification link.',
+      );
+    }
 
     // 3. Multi-Factor Authentication check
     // If MFA is enabled OR if user is SUPER_ADMIN (where MFA is strictly mandatory)
@@ -857,6 +906,10 @@ export class AuthService {
         used: false,
       });
 
+      if (!this.configService.isSandbox) {
+        await this.emailService.sendPasswordResetEmail(user.email, user.fullName, token);
+      }
+
       await this.auditService.record({
         actorId: user.id,
         actorRole: user.role,
@@ -871,8 +924,10 @@ export class AuthService {
 
     // Always return safe message so as not to reveal email presence
     return {
-      message: 'If the email exists in our records, password reset instructions have been created.',
-      // In sandbox mode, return token so tester/dev can complete reset immediately
+      message: this.configService.isSandbox
+        ? 'If the email exists in our records, password reset instructions have been created.'
+        : 'If the email exists in our records, password reset instructions have been sent.',
+      // Sandbox only: return token so testers can complete reset without email
       sandboxResetToken: this.configService.isSandbox ? token : undefined,
     };
   }

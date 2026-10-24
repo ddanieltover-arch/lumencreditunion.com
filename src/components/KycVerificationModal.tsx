@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import { KycDocumentType, SubmitKycInput } from '../types';
 import {
   X,
@@ -57,8 +58,6 @@ export const KycVerificationModal: React.FC = () => {
       setSelectedCountryCode(activeMember.countryCode);
     }
   }, [activeMember]);
-
-  if (!isKycModalOpen) return null;
 
   // Find country details from data-driven countries table
   const selectedCountry =
@@ -126,23 +125,6 @@ export const KycVerificationModal: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  const handleSampleFill = (type: KycDocumentType) => {
-    // Generate valid sample PDF base64 for fast sandbox verification testing
-    const sampleBuffer = `%PDF-1.4\n1 0 obj\n<< /Title (${selectedCountry?.name || 'US'} ${type} Test Scan) /Author (Lumenfield Sandbox) >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF`;
-    const base64 = `data:application/pdf;base64,${btoa(sampleBuffer)}`;
-    const sampleFile = new File([sampleBuffer], `${type.toLowerCase()}_sample_test_scan.pdf`, {
-      type: 'application/pdf',
-    });
-
-    setFrontDoc({
-      file: sampleFile,
-      base64,
-      previewUrl: null,
-      error: null,
-    });
-    showToast(`Loaded clean sample test scan for ${type}.`, 'info');
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmissionError(null);
@@ -199,8 +181,12 @@ export const KycVerificationModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-      <div className="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5 my-6 animate-in fade-in zoom-in-95 duration-200">
+    <ModalMotion
+      open={isKycModalOpen}
+      onClose={closeKycModal}
+      panelClassName="bg-white rounded-3xl max-w-xl w-full p-6 sm:p-8 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5 my-6"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+    >
         {/* Header */}
         <div className="flex items-start justify-between border-b border-[#DCE5E3] pb-4">
           <div className="flex items-center gap-3">
@@ -331,17 +317,10 @@ export const KycVerificationModal: React.FC = () => {
 
           {/* 3. Front Document Upload */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="mb-1.5">
               <label className="text-xs font-bold text-[#0E1B1F]">
                 3. Front / Bio Page File (PDF, JPG, PNG, WEBP · Max 10 MB)
               </label>
-              <button
-                type="button"
-                onClick={() => handleSampleFill(selectedDocType)}
-                className="text-[11px] text-[#0F766E] font-semibold hover:underline cursor-pointer"
-              >
-                + Fill Sample Sandbox Scan
-              </button>
             </div>
 
             <label className="border-2 border-dashed border-[#BCCAC8] hover:border-[#0A3D3F] rounded-2xl p-4 flex flex-col items-center justify-center gap-2 bg-[#F4F7F6]/60 hover:bg-[#F4F7F6] transition cursor-pointer text-center relative min-h-[100px]">
@@ -446,7 +425,6 @@ export const KycVerificationModal: React.FC = () => {
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalMotion>
   );
 };

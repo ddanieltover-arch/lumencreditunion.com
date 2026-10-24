@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { ModalMotion } from '../motion';
 import { ShieldAlert, Copy, Check, Eye, AlertTriangle, X } from 'lucide-react';
 
 export const OneTimeCredentialsModal: React.FC = () => {
@@ -7,9 +8,8 @@ export const OneTimeCredentialsModal: React.FC = () => {
   const [copiedPan, setCopiedPan] = useState(false);
   const [copiedCvv, setCopiedCvv] = useState(false);
 
-  if (!oneTimeCredentials) return null;
-
   const handleCopyPan = () => {
+    if (!oneTimeCredentials) return;
     navigator.clipboard.writeText(oneTimeCredentials.fullPan.replace(/\s+/g, ''));
     setCopiedPan(true);
     showToast('Card number copied to clipboard', 'info');
@@ -17,6 +17,7 @@ export const OneTimeCredentialsModal: React.FC = () => {
   };
 
   const handleCopyCvv = () => {
+    if (!oneTimeCredentials) return;
     navigator.clipboard.writeText(oneTimeCredentials.cvv);
     setCopiedCvv(true);
     showToast('CVV copied to clipboard', 'info');
@@ -28,13 +29,15 @@ export const OneTimeCredentialsModal: React.FC = () => {
   };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="one-time-creds-title"
-      className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in"
+    <ModalMotion
+      open={!!oneTimeCredentials}
+      onClose={handleClose}
+      labelledBy="one-time-creds-title"
+      panelClassName="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5"
+      overlayClassName="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4"
     >
-      <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-7 border border-[#DCE5E3] shadow-2xl flex flex-col gap-5">
+      {oneTimeCredentials && (
+      <>
         {/* Header */}
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -160,7 +163,8 @@ export const OneTimeCredentialsModal: React.FC = () => {
             After closing, only masked digits (•••• {oneTimeCredentials.fullPan.slice(-4)}) will be displayed.
           </p>
         </div>
-      </div>
-    </div>
+      </>
+      )}
+    </ModalMotion>
   );
 };

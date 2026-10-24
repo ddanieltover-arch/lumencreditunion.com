@@ -122,7 +122,10 @@ export function createApiApp(
       sandboxMode: configService.isSandbox,
       productionMode: configService.isProduction,
       requireSecondApprover: configService.requireSecondApprover,
-      bannerNotice: 'Sandbox environment: all balances are test funds, not real money.',
+      bannerNotice: configService.isSandbox
+        ? 'Sandbox environment: all balances are test funds, not real money.'
+        : 'Lumenfield Credit Union — secure member access.',
+      emailDeliveryEnabled: Boolean(process.env.RESEND_API_KEY?.trim()),
     });
   });
 
