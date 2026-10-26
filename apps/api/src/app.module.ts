@@ -914,12 +914,15 @@ export function createApiApp(
           const credit = (tx.entries || []).find((e: any) => e.direction === 'CREDIT' && e.accountType === 'MEMBER_WALLET');
           const memberId = String(tx.metadata?.memberId || credit?.accountId?.replace(/^wallet-/, '').replace(/-[a-z]{3}$/i, '') || '');
           const currency = (tx.currency || 'USD') as SupportedCurrency;
+          const fundedAtIso = String(
+            tx.metadata?.fundedAt || tx.createdAt || '',
+          );
           recentFunding.push({
             id: tx.id,
             memberId,
             memberName: nameById.get(memberId) || memberId || 'Member',
             reference: tx.reference,
-            date: (tx.createdAt || '').slice(0, 10),
+            date: fundedAtIso.slice(0, 10) || (tx.createdAt || '').slice(0, 10),
             amount: Number(credit?.amountMinor || 0) / 100,
             currency,
             source,

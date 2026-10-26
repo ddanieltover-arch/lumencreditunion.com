@@ -401,7 +401,14 @@ export class LedgerService {
     }
 
     const txId = crypto.randomUUID();
-    const now = new Date().toISOString();
+    const postedAt = new Date().toISOString();
+    const fundedAtRaw = validated.metadata?.fundedAt;
+    const fundedAtCandidate =
+      typeof fundedAtRaw === 'string' && !Number.isNaN(Date.parse(fundedAtRaw))
+        ? new Date(fundedAtRaw).toISOString()
+        : null;
+    // Prefer admin-entered funding time for display/history; fall back to post time
+    const now = fundedAtCandidate || postedAt;
 
     const record: LedgerTransactionRecord = {
       id: txId,
@@ -413,7 +420,11 @@ export class LedgerService {
       source: validated.source,
       status: isPendingApproval ? 'PENDING_APPROVAL' : 'POSTED',
       depositReference: validated.depositReference,
-      metadata: validated.metadata,
+      metadata: {
+        ...(validated.metadata || {}),
+        fundedAt: now,
+        postedAt,
+      },
       createdById: actorId,
       secondApprovedById: validated.secondApprovedByUserId,
       createdAt: now,
@@ -531,6 +542,11 @@ export class LedgerService {
 
     const prevBalance = memberWallet.cachedBalanceMinor;
 
+    const fundedAt =
+      typeof validated.fundedAt === 'string' && !Number.isNaN(Date.parse(validated.fundedAt))
+        ? new Date(validated.fundedAt).toISOString()
+        : new Date().toISOString();
+
     const tx = await this.postTransaction(
       {
         idempotencyKey,
@@ -545,6 +561,7 @@ export class LedgerService {
           memberId: validated.memberId,
           fundingSource: isSandbox ? 'Test credit (sandbox)' : validated.source || 'Bank Deposit',
           sandboxMode: isSandbox,
+          fundedAt,
         },
         entries: [
           {
@@ -573,6 +590,7 @@ export class LedgerService {
       currency: validated.currency,
     });
     const member = this.authService?.getUserById(validated.memberId);
+    const fundedAtDisplay = String(tx.metadata?.fundedAt || tx.createdAt || fundedAt);
 
     if (tx.status === 'PENDING_APPROVAL') {
       void this.emailService.sendAdminDualApprovalPendingEmail({
@@ -587,6 +605,7 @@ export class LedgerService {
         currency: validated.currency,
         reference: tx.reference,
         reason: validated.reason,
+        fundedAt: fundedAtDisplay,
       });
     }
 
@@ -660,15 +679,18 @@ export class LedgerService {
           amountMinor: creditEntry.amountMinor,
           currency: creditEntry.currency,
         });
+        const fundedAtDisplay = String(tx.metadata?.fundedAt || tx.createdAt || '');
         void this.emailService.sendDualApprovalPostedEmail(member.email, member.fullName, {
           amountFormatted,
           reference: tx.reference,
+          fundedAt: fundedAtDisplay || undefined,
         });
         void this.emailService.sendWalletFundedEmail(member.email, member.fullName, {
           amountFormatted,
           currency: creditEntry.currency,
           reference: tx.reference,
           reason: (tx.metadata?.reason as string) || tx.description,
+          fundedAt: fundedAtDisplay || undefined,
         });
       }
     }
@@ -908,7 +930,7 @@ export class LedgerService {
             currencySymbol: symbols[entry.currency] || '$',
             source: tx.source,
             status: tx.status,
-            createdAt: entry.createdAt,
+            createdAt: String(tx.metadata?.fundedAt || entry.createdAt || tx.createdAt),
           });
         }
       }

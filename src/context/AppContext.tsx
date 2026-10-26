@@ -117,6 +117,8 @@ interface AppContextType {
     source: string;
     reference: string;
     reason: string;
+    /** ISO-8601 effective funding time from admin. */
+    fundedAt?: string;
   }) => boolean;
 
   sendTransfer: (params: {
@@ -565,7 +567,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         const debit = entries.find((e: any) => e.direction === 'DEBIT');
         const credit = entries.find((e: any) => e.direction === 'CREDIT');
         const amountMinor = Number(debit?.amountMinor ?? credit?.amountMinor ?? 0);
-        const created = tx.createdAt ? new Date(tx.createdAt) : new Date();
+        const fundedAtRaw = tx.metadata?.fundedAt || tx.createdAt;
+        const created = fundedAtRaw ? new Date(fundedAtRaw) : new Date();
         const memberId = String(tx.metadata?.memberId || '');
         const memberName =
           (memberId && nameById?.get(memberId)) ||
@@ -1318,6 +1321,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     source,
     reference,
     reason,
+    fundedAt,
   }: {
     memberId: string;
     amount: number;
@@ -1325,6 +1329,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     source: string;
     reference: string;
     reason: string;
+    fundedAt?: string;
   }) => {
     if (currentUser?.role !== 'SUPER_ADMIN') {
       showToast(
@@ -1354,6 +1359,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return false;
     }
 
+    const effectiveAt =
+      fundedAt && !Number.isNaN(Date.parse(fundedAt))
+        ? new Date(fundedAt)
+        : new Date();
+    const fundedAtIso = effectiveAt.toISOString();
+
     // Call server API route with Bearer token — durable source of truth for ledger
     if (authToken) {
       const idempotencyKey = `idemp-fund-${targetMember.id}-${Date.now()}`;
@@ -1371,6 +1382,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           reference,
           reason: reason || 'Member wallet credit.',
           idempotencyKey,
+          fundedAt: fundedAtIso,
         }),
       })
         .then(async (res) => {
@@ -1401,15 +1413,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    const now = new Date();
-    const dateFormatted = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const dateFormatted = effectiveAt.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
 
     // 2. Add Transaction to Member's History if active member or target member
     const newTx: Transaction = {
       id: 'tx-' + Date.now(),
       description: `Test funding, administrator credit (${reference})`,
       date: dateFormatted,
-      timestamp: now.toISOString(),
+      timestamp: fundedAtIso,
       status: 'Completed',
       amount: amount,
       currency: currency,
@@ -1424,8 +1438,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newLedger: LedgerPosting = {
       id: 'ledg-' + Date.now(),
       reference: reference,
-      date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      timestamp: now.toISOString(),
+      date: effectiveAt.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+      timestamp: fundedAtIso,
       description: reason || 'Member wallet credit.',
       currency: currency,
       debitAccount: 'Funding pool',

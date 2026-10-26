@@ -3,10 +3,34 @@ import type { RenderedEmail } from '../types';
 
 type Base = { appUrl: string; supportEmail: string; fullName: string };
 
+function formatFundedAt(iso?: string): string | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return (
+    d.toLocaleString('en-GB', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'UTC',
+    }) + ' UTC'
+  );
+}
+
 export function walletFundedEmail(
   base: Base,
-  details: { amountFormatted: string; currency: string; reference: string; reason?: string },
+  details: {
+    amountFormatted: string;
+    currency: string;
+    reference: string;
+    reason?: string;
+    fundedAt?: string;
+  },
 ): RenderedEmail {
+  const fundedAtLabel = formatFundedAt(details.fundedAt);
   return buildEmail('Your Lumenfield wallet was funded', {
     ...base,
     preheader: `${details.amountFormatted} credited to your ${details.currency} wallet.`,
@@ -19,6 +43,7 @@ export function walletFundedEmail(
       { label: 'Amount', value: details.amountFormatted },
       { label: 'Currency', value: details.currency },
       { label: 'Reference', value: details.reference },
+      ...(fundedAtLabel ? [{ label: 'Funded at', value: fundedAtLabel }] : []),
       ...(details.reason ? [{ label: 'Reason', value: details.reason }] : []),
     ],
     cta: { label: 'View wallet', url: `${base.appUrl}/` },
@@ -27,8 +52,9 @@ export function walletFundedEmail(
 
 export function dualApprovalPostedEmail(
   base: Base,
-  details: { amountFormatted: string; reference: string },
+  details: { amountFormatted: string; reference: string; fundedAt?: string },
 ): RenderedEmail {
+  const fundedAtLabel = formatFundedAt(details.fundedAt);
   return buildEmail('Funding approved and posted', {
     ...base,
     preheader: 'Dual-control funding has been posted to your wallet.',
@@ -40,6 +66,7 @@ export function dualApprovalPostedEmail(
     details: [
       { label: 'Amount', value: details.amountFormatted },
       { label: 'Reference', value: details.reference },
+      ...(fundedAtLabel ? [{ label: 'Funded at', value: fundedAtLabel }] : []),
     ],
     cta: { label: 'View wallet', url: `${base.appUrl}/` },
   });

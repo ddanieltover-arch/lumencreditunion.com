@@ -85,6 +85,13 @@ export const AdminFundWalletSchema = z.object({
   source: z.string().optional(), // e.g. TEST, BANK, CRYPTO
   depositReference: z.string().optional(),
   confirmed: z.boolean().optional(),
+  /** Admin-entered effective funding time (ISO-8601). Defaults to post time when omitted. */
+  fundedAt: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || !Number.isNaN(Date.parse(v)), {
+      message: 'fundedAt must be a valid date/time',
+    }),
 });
 export type AdminFundWalletInput = z.infer<typeof AdminFundWalletSchema>;
 

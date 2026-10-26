@@ -245,6 +245,7 @@ export class EmailService {
       currency: string;
       reference: string;
       reason?: string;
+      fundedAt?: string;
     },
   ) {
     return this.deliver(
@@ -256,7 +257,7 @@ export class EmailService {
   async sendDualApprovalPostedEmail(
     to: string,
     fullName: string,
-    details: { amountFormatted: string; reference: string },
+    details: { amountFormatted: string; reference: string; fundedAt?: string },
   ) {
     return this.deliver(
       to,

@@ -170,6 +170,12 @@ export const AdminPortal: React.FC = () => {
   );
   const [reason, setReason] = useState<string>('');
   const [confirmed, setConfirmed] = useState<boolean>(true);
+  /** datetime-local value (local wall clock); converted to ISO on submit */
+  const [fundedAtLocal, setFundedAtLocal] = useState<string>(() => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
   const [memberSearchQuery, setMemberSearchQuery] = useState<string>('');
 
   // Modal for full audit log
@@ -429,6 +435,16 @@ export const AdminPortal: React.FC = () => {
       return;
     }
 
+    if (!fundedAtLocal.trim()) {
+      showToast('Please enter the date and time of funding.', 'warning');
+      return;
+    }
+    const fundedAtDate = new Date(fundedAtLocal);
+    if (Number.isNaN(fundedAtDate.getTime())) {
+      showToast('Please enter a valid date and time of funding.', 'warning');
+      return;
+    }
+
     const fundingRef =
       reference.trim() || `REF-${Math.floor(1000 + Math.random() * 9000)}`;
 
@@ -439,12 +455,18 @@ export const AdminPortal: React.FC = () => {
       source: fundingSource,
       reference: fundingRef,
       reason,
+      fundedAt: fundedAtDate.toISOString(),
     });
 
     if (success) {
       setReference(`REF-${Math.floor(1000 + Math.random() * 9000)}`);
       setAmountStr('');
       setConfirmed(false);
+      const d = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      setFundedAtLocal(
+        `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      );
     }
   };
 
@@ -1098,6 +1120,24 @@ export const AdminPortal: React.FC = () => {
                     onChange={(e) => setReference(e.target.value)}
                     className="min-h-[48px] border border-[#BCCAC8] rounded-xl px-3.5 text-[15px] text-[#0E1B1F] font-mono focus:outline-none focus:border-[#0A3D3F]"
                   />
+                </div>
+
+                {/* Date and time of funding */}
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="f-funded-at" className="text-sm font-semibold text-[#0E1B1F]">
+                    Date and time of funding
+                  </label>
+                  <input
+                    id="f-funded-at"
+                    type="datetime-local"
+                    value={fundedAtLocal}
+                    onChange={(e) => setFundedAtLocal(e.target.value)}
+                    required
+                    className="min-h-[48px] border border-[#BCCAC8] rounded-xl px-3.5 text-[15px] text-[#0E1B1F] font-mono focus:outline-none focus:border-[#0A3D3F]"
+                  />
+                  <span className="text-[13px] text-[#4A5B60] leading-relaxed">
+                    Shown on the member wallet, ledger, and funding confirmation email.
+                  </span>
                 </div>
 
                 {/* Reason for Credit */}
