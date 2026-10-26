@@ -22,10 +22,9 @@ export const ConfigSchema = z.object({
     .optional()
     .transform((val) => (val === undefined ? false : val.toLowerCase() === 'true')),
 
-  // Database & Redis
-  DATABASE_URL: z
-    .string()
-    .default('postgresql://lumenfield_user:lumenfield_secret_pass@localhost:5432/lumenfield_db?schema=public'),
+  // Database & Redis — must be the same Neon URL on local and Vercel for shared data.
+  // No default localhost: missing URL means persistence is disabled (safer than a silent local DB).
+  DATABASE_URL: z.string().optional().default(''),
   REDIS_URL: z.string().default('redis://localhost:6379'),
 
   // Auth & Security

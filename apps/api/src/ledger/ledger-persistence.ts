@@ -1,4 +1,5 @@
 import { getPrisma, type SqlClient } from '../db/prisma';
+import { shouldReplaceSnapshot } from '../db/safe-snapshot';
 import type { AccountRecord, LedgerTransactionRecord } from './ledger.service';
 
 export type PersistedLedgerSnapshot = {
@@ -56,6 +57,18 @@ export async function persistLedgerSnapshot(
   if (!prisma) return;
   try {
     await ensureSchema(prisma);
+    const existing = await loadPersistedLedgerSnapshot();
+    const existingCount = existing?.transactions?.length ?? 0;
+    const incomingCount = snapshot.transactions?.length ?? 0;
+    if (
+      !shouldReplaceSnapshot({
+        store: 'LedgerPersistence',
+        existingCount,
+        incomingCount,
+      })
+    ) {
+      return;
+    }
     const json = JSON.stringify(snapshot);
     await prisma.$executeRawUnsafe(
       `

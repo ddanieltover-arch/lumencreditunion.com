@@ -53,7 +53,10 @@ export class KycService {
     private readonly countriesService: CountriesService = new CountriesService(),
     private readonly emailService: EmailService = EmailService.getInstance(),
   ) {
-    this.seedDemoSubmissions();
+    // Demo KYC only in sandbox — never seed fake queue rows over live Neon data
+    if (process.env.SANDBOX_MODE?.toLowerCase() === 'true') {
+      this.seedDemoSubmissions();
+    }
     this.hydratePromise = this.hydrateFromStore();
   }
 

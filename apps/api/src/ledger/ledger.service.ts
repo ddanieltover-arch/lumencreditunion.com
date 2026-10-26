@@ -115,17 +115,10 @@ export class LedgerService {
 
   async ensureReady(): Promise<void> {
     if (!this.hydratePromise) {
-      this.hydratePromise = this.hydrateFromStore()
-        .then(() => {
-          // Persist live in-memory book if DB was empty (e.g. first deploy after funding)
-          if (this.transactions.length > 0) {
-            this.schedulePersist();
-          }
-        })
-        .catch((err) => {
-          console.error('[Ledger] Hydration failed:', err);
-          this.hydratePromise = null;
-        });
+      this.hydratePromise = this.hydrateFromStore().catch((err) => {
+        console.error('[Ledger] Hydration failed:', err);
+        this.hydratePromise = null;
+      });
     }
     await this.hydratePromise;
   }

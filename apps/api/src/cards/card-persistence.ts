@@ -1,5 +1,6 @@
 import type { CardCurrency, CardStatus, CardTransactionRecord } from '@lumenfield/shared';
 import { getPrisma, type SqlClient } from '../db/prisma';
+import { shouldReplaceSnapshot } from '../db/safe-snapshot';
 
 export type PersistedCard = {
   id: string;
@@ -75,6 +76,18 @@ export async function persistCardSnapshot(snapshot: PersistedCardSnapshot): Prom
   if (!prisma) return;
   try {
     await ensureSchema(prisma);
+    const existing = await loadPersistedCardSnapshot();
+    const existingCount = existing?.cards?.length ?? 0;
+    const incomingCount = snapshot.cards?.length ?? 0;
+    if (
+      !shouldReplaceSnapshot({
+        store: 'CardPersistence',
+        existingCount,
+        incomingCount,
+      })
+    ) {
+      return;
+    }
     const json = JSON.stringify(snapshot);
     await prisma.$executeRawUnsafe(
       `

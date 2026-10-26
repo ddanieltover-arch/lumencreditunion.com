@@ -94,14 +94,10 @@ export class CardsService {
 
   async ensureReady(): Promise<void> {
     if (!this.hydratePromise) {
-      this.hydratePromise = this.hydrateFromStore()
-        .then(() => {
-          if (this.cards.size > 0) this.schedulePersist();
-        })
-        .catch((err) => {
-          console.error('[Cards] Hydration failed:', err);
-          this.hydratePromise = null;
-        });
+      this.hydratePromise = this.hydrateFromStore().catch((err) => {
+        console.error('[Cards] Hydration failed:', err);
+        this.hydratePromise = null;
+      });
     }
     await this.hydratePromise;
   }

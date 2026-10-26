@@ -10,7 +10,13 @@ This runbook provides Standard Operating Procedures (SOPs), emergency incident r
 | :--- | :--- | :--- | :--- |
 | **Web Client & PWA** | `http://localhost:3000` | React 19, Vite, Tailwind CSS | Progressive Web App client for members & admins. |
 | **API Application** | `http://localhost:3000` (Unified) / `3001` (Dev API) | Express & NestJS architecture | REST APIs, authentication, guards, ledger posting. |
-| **Database** | `postgresql://...:5432` | PostgreSQL (Prisma ORM) | Relational store for users, ledger, countries, audit. |
+| **Database** | Neon Postgres (`DATABASE_URL`) | PostgreSQL via `pg` + runtime JSON stores | Shared local+live store for members, KYC, ledger, cards, funding, audit. |
+
+### Shared Neon (local = live)
+
+- Put the **same** Neon `DATABASE_URL` / `DATABASE_URL_UNPOOLED` in root `.env` and in Vercel → Project → Environment Variables.
+- **Git push / Vercel deploy never migrates, truncates, or reseeds member data.** Only app upserts write to Neon. Manual migrations stay local (`packages/db` prisma migrate) and are not part of deploy.
+- Snapshot stores (ledger/cards) refuse to overwrite a richer DB snapshot with an empty/smaller in-memory book after a cold start.
 | **Private Document Storage** | `http://localhost:9000` (MinIO/S3) | S3-Compatible Object Store | Encrypted KYC passports and national ID documents. |
 | **Job Queues & Session Cache**| `redis://localhost:6379` | Redis / BullMQ | Rate limiters, reconciliation jobs, task queues. |
 
