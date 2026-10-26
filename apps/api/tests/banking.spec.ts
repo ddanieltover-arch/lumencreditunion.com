@@ -123,6 +123,7 @@ describe('Auth registration mints bank identity + transfer lookup', () => {
           phone: '+1 555 0199',
           countryCode: c.countryCode,
           dateOfBirth: '1991-06-15',
+          role: 'MEMBER',
         },
         '127.0.0.1',
         'vitest',

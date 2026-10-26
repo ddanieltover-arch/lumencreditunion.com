@@ -61,7 +61,7 @@ async function ensureSchema(prisma: PrismaClient): Promise<void> {
         `),
       )
       .then(() => undefined)
-      .catch((err) => {
+      .catch((err: unknown) => {
         schemaReady = null;
         console.error('[FundingPersistence] Failed to ensure schema:', err);
         throw err;

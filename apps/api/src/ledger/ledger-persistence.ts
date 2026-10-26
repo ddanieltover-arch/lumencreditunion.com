@@ -36,7 +36,7 @@ async function ensureSchema(prisma: PrismaClient): Promise<void> {
         )
       `)
       .then(() => undefined)
-      .catch((err) => {
+      .catch((err: unknown) => {
         schemaReady = null;
         console.error('[LedgerPersistence] Failed to ensure schema:', err);
         throw err;

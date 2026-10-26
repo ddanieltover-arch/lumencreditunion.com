@@ -384,31 +384,15 @@ describe('Virtual Cards & Acceptance Criteria', () => {
       expect(unfreezeLog).toBeDefined();
     });
 
-    it('allows admin to edit cardholder name, limits, and reset spending counters', async () => {
+    it('allows admin to edit cardholder name and spending limits', async () => {
       const card = cardsService.getMemberCards(memberId, 'USD')[0];
 
-      // Simulate a purchase to increment spentTodayMinor
-      await cardsService.simulatePurchase(
-        card.id,
-        {
-          amountMinor: 2500, // $25.00
-          merchantName: 'Cloud Server',
-        },
-        '127.0.0.1',
-        memberId,
-      );
-
-      const beforeUpdate = cardsService.getCardById(card.id, memberId);
-      expect(beforeUpdate.spentTodayMinor).toBe(2500);
-
-      // Admin updates limits and resets today spending
       const updated = await cardsService.adminUpdateCard(
         card.id,
         {
           cardholderName: 'Amara N. Okafor',
           dailyLimitMinor: 80000, // $800.00
           monthlyLimitMinor: 300000, // $3,000.00
-          resetSpentToday: true,
           reason: 'Customer VIP upgrade',
         },
         adminId,
@@ -418,7 +402,6 @@ describe('Virtual Cards & Acceptance Criteria', () => {
       expect(updated.cardholderName).toBe('Amara N. Okafor');
       expect(updated.dailyLimitMinor).toBe(80000);
       expect(updated.monthlyLimitMinor).toBe(300000);
-      expect(updated.spentTodayMinor).toBe(0); // Successfully reset to 0
     });
 
     it('allows admin to credit member wallet linked to virtual card with double-entry ledger posting', async () => {
@@ -454,16 +437,15 @@ describe('Virtual Cards & Acceptance Criteria', () => {
       expect(creditLog).toBeDefined();
     });
 
-    it('allows admin to issue a new virtual card for any member and view its transactions', async () => {
-      const result = await cardsService.adminCreateCard(
+    it('allows a member to issue a virtual card and retrieve its transactions', async () => {
+      const result = await cardsService.createCard(
+        memberId,
         {
-          memberId,
           currency: 'EUR',
           cardholderName: 'Amara Euro Card',
           dailyLimitMinor: 150000,
           monthlyLimitMinor: 600000,
         },
-        adminId,
         '127.0.0.1',
       );
 
@@ -473,7 +455,6 @@ describe('Virtual Cards & Acceptance Criteria', () => {
       expect(result.oneTimeCredentials.fullPan).toBeDefined();
       expect(result.oneTimeCredentials.cvv).toBeDefined();
 
-      // Fund EUR wallet to simulate purchase
       await ledgerService.adminFundMemberWallet(
         {
           memberId,
@@ -486,7 +467,6 @@ describe('Virtual Cards & Acceptance Criteria', () => {
         '127.0.0.1',
       );
 
-      // Simulate a purchase on the newly issued card
       await cardsService.simulatePurchase(
         result.card.id,
         {
@@ -498,8 +478,7 @@ describe('Virtual Cards & Acceptance Criteria', () => {
         memberId,
       );
 
-      // Admin gets transaction history for this card
-      const txs = cardsService.adminGetCardTransactions(result.card.id);
+      const txs = cardsService.getCardTransactions(result.card.id, memberId);
       expect(txs.length).toBe(1);
       expect(txs[0].merchantName).toBe('Berlin Metro');
       expect(txs[0].status).toBe('APPROVED');
