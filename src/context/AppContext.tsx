@@ -991,9 +991,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
               return;
             }
-          } catch {
-            // Stale or expired session on server: clear it
-            localStorage.removeItem('lumenfield_refresh_token');
+            // Access token accepted by refresh but /auth/me failed — keep refresh for retry
+          } catch (err) {
+            const status = (err as { status?: number })?.status;
+            // Only drop the stored refresh on definitive auth rejection (not network blips)
+            if (status === 401 || status === 403) {
+              localStorage.removeItem('lumenfield_refresh_token');
+            }
           }
         }
 

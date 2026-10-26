@@ -35,6 +35,7 @@ import {
   persistUser,
   deletePersistedUser,
   loadPersistedSessions,
+  loadPersistedSessionById,
   persistSession,
   deletePersistedSession,
 } from './auth-persistence';
@@ -79,7 +80,15 @@ export interface SessionRecord {
   expiresAt: Date;
   createdAt: string;
   lastActiveAt: string;
+  /** Prior refresh hash — accepted during grace to avoid false replay on concurrent refreshes. */
+  previousRefreshTokenHash?: string | null;
+  /** ISO timestamp; previous token + graceRefreshToken valid until then. */
+  rotationGraceUntil?: string | null;
+  /** Latest refresh token plaintext for idempotent grace replays (cleared after grace). */
+  graceRefreshToken?: string | null;
 }
+
+const REFRESH_GRACE_MS = 30_000;
 
 export interface PasswordResetRecord {
   token: string;
@@ -88,14 +97,19 @@ export interface PasswordResetRecord {
   used: boolean;
 }
 
-export class AuthService {
-  private static instance: AuthService | null = null;
+type GlobalAuth = typeof globalThis & { __lumenAuthService?: AuthService };
 
+export class AuthService {
   private users: Map<string, UserRecord> = new Map();
   private sessions: Map<string, SessionRecord> = new Map();
   private passwordResetTokens: Map<string, PasswordResetRecord> = new Map();
   private emailVerificationTokens: Map<string, string> = new Map(); // token -> userId
   private mfaTickets: Map<string, { userId: string; expiresAt: number }> = new Map();
+  /** In-process single-flight for concurrent refreshes of the same session. */
+  private readonly refreshInFlight = new Map<
+    string,
+    Promise<{ accessToken: string; refreshToken: string }>
+  >();
   /** Monotonic sequence for unique sandbox account numbers. */
   private bankAccountSeq = 100000;
   private readonly normalizedAccountIndex = new Map<string, string>(); // normalized -> userId
@@ -117,18 +131,19 @@ export class AuthService {
     });
   }
 
-  /** Process-wide singleton so member registry survives warm serverless / HMR remounts. */
+  /** Process-wide singleton so auth state survives warm serverless / duplicate module loads. */
   static getInstance(
     auditService?: AuditService,
     configService?: ConfigService,
   ): AuthService {
-    if (!AuthService.instance) {
-      AuthService.instance = new AuthService(
+    const g = globalThis as GlobalAuth;
+    if (!g.__lumenAuthService) {
+      g.__lumenAuthService = new AuthService(
         auditService || new AuditService(),
         configService || ConfigService.getInstance(),
       );
     }
-    return AuthService.instance;
+    return g.__lumenAuthService;
   }
 
   /** Wait for admin seed before handling auth (avoids serverless race on cold start). */
@@ -208,27 +223,45 @@ export class AuthService {
         });
       }
 
-      // Restore refresh sessions so admin/member refresh survives serverless cold starts
-      if (this.sessions.size === 0) {
-        const persistedSessions = await loadPersistedSessions();
-        const now = Date.now();
-        let restored = 0;
-        for (const session of persistedSessions) {
-          if (!session?.id) continue;
-          if (session.expiresAt.getTime() < now) {
-            void deletePersistedSession(session.id);
-            continue;
-          }
+      // Merge refresh sessions from DB (source of truth across serverless isolates)
+      const persistedSessions = await loadPersistedSessions();
+      const now = Date.now();
+      let restored = 0;
+      for (const session of persistedSessions) {
+        if (!session?.id) continue;
+        if (session.expiresAt.getTime() < now || session.isRevoked) {
+          void deletePersistedSession(session.id);
+          this.sessions.delete(session.id);
+          continue;
+        }
+        const local = this.sessions.get(session.id);
+        // Prefer the newer tokenVersion from either side
+        if (!local || (session.tokenVersion ?? 0) >= (local.tokenVersion ?? 0)) {
           this.sessions.set(session.id, session);
-          restored += 1;
         }
-        if (restored) {
-          console.log(`[AuthService] Restored ${restored} session(s) from database.`);
-        }
+        restored += 1;
+      }
+      if (restored) {
+        console.log(`[AuthService] Restored ${restored} session(s) from database.`);
       }
     } catch (err) {
       console.error('[AuthService] Hydration failed:', err);
     }
+  }
+
+  /** Load session from DB first so warm/cold isolates share one authority. */
+  private async getSessionAuthoritative(sessionId: string): Promise<SessionRecord | null> {
+    const fromDb = await loadPersistedSessionById(sessionId);
+    if (fromDb) {
+      this.sessions.set(fromDb.id, fromDb);
+      return fromDb;
+    }
+    return this.sessions.get(sessionId) ?? null;
+  }
+
+  private async saveSession(session: SessionRecord): Promise<void> {
+    this.sessions.set(session.id, session);
+    await persistSession(session);
   }
 
   /** Durable write for the in-memory registry (serverless-safe). */
@@ -875,8 +908,7 @@ export class AuthService {
       lastActiveAt: nowIso,
     };
 
-    this.sessions.set(sessionId, session);
-    void persistSession(session);
+    await this.saveSession(session);
 
     // Audit log
     await this.auditService.record({
@@ -934,19 +966,45 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string }> {
     await this.ensureReady();
     const refreshSecret = this.configService.get('JWT_REFRESH_SECRET');
-    const jwtSecret = this.configService.get('JWT_SECRET');
 
-    let payload;
+    let payload: { sub: string; sessionId: string; tokenFamily: string; tokenVersion: number };
     try {
       payload = verifyRefreshToken(oldRefreshToken, refreshSecret);
-    } catch (err) {
+    } catch {
       const error: any = new Error('Invalid or expired refresh token.');
       error.statusCode = 401;
       throw error;
     }
 
-    const session = this.sessions.get(payload.sessionId);
-    if (!session) {
+    const inFlight = this.refreshInFlight.get(payload.sessionId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const work = this.rotateRefreshTokenLocked(
+      oldRefreshToken,
+      payload,
+      ipAddress,
+      userAgent,
+    ).finally(() => {
+      this.refreshInFlight.delete(payload.sessionId);
+    });
+    this.refreshInFlight.set(payload.sessionId, work);
+    return work;
+  }
+
+  private async rotateRefreshTokenLocked(
+    oldRefreshToken: string,
+    payload: { sub: string; sessionId: string; tokenFamily: string; tokenVersion: number },
+    ipAddress: string,
+    userAgent?: string,
+  ): Promise<{ accessToken: string; refreshToken: string }> {
+    const refreshSecret = this.configService.get('JWT_REFRESH_SECRET');
+    const jwtSecret = this.configService.get('JWT_SECRET');
+    const incomingHash = hashToken(oldRefreshToken);
+
+    const session = await this.getSessionAuthoritative(payload.sessionId);
+    if (!session || session.expiresAt.getTime() < Date.now()) {
       const error: any = new Error('Session not found or expired.');
       error.statusCode = 401;
       throw error;
@@ -959,15 +1017,38 @@ export class AuthService {
       throw error;
     }
 
-    const incomingHash = hashToken(oldRefreshToken);
+    const issueAccess = () =>
+      signAccessToken(
+        { sub: user.id, email: user.email, role: user.role, sessionId: session.id },
+        jwtSecret,
+        '15m',
+      );
 
-    // CRITICAL SECURITY: REPLAY ATTACK DETECTION
-    // If session is already revoked OR the stored hash doesn't match the incoming token hash,
-    // this token has ALREADY BEEN USED! Immediately revoke the session family.
+    // Grace replay: concurrent/retry with the just-rotated previous token returns the same pair
+    const graceUntil = session.rotationGraceUntil
+      ? new Date(session.rotationGraceUntil).getTime()
+      : 0;
+    if (
+      session.previousRefreshTokenHash &&
+      session.previousRefreshTokenHash === incomingHash &&
+      session.graceRefreshToken &&
+      Date.now() < graceUntil &&
+      !session.isRevoked
+    ) {
+      return {
+        accessToken: issueAccess(),
+        refreshToken: session.graceRefreshToken,
+      };
+    }
+
+    // CRITICAL SECURITY: REPLAY ATTACK DETECTION (outside grace window)
     if (session.isRevoked || session.refreshTokenHash !== incomingHash) {
       session.isRevoked = true;
       session.revokedAt = new Date();
-      void persistSession(session);
+      session.graceRefreshToken = null;
+      session.previousRefreshTokenHash = null;
+      session.rotationGraceUntil = null;
+      await this.saveSession(session);
 
       await this.auditService.record({
         actorId: user.id,
@@ -1010,20 +1091,16 @@ export class AuthService {
       '7d',
     );
 
-    // Invalidate old token by updating hash and version
+    session.previousRefreshTokenHash = session.refreshTokenHash;
+    session.graceRefreshToken = newRefreshToken;
+    session.rotationGraceUntil = new Date(Date.now() + REFRESH_GRACE_MS).toISOString();
     session.refreshTokenHash = hashToken(newRefreshToken);
     session.tokenVersion = nextVersion;
     session.lastActiveAt = new Date().toISOString();
-    void persistSession(session);
-
-    const newAccessToken = signAccessToken(
-      { sub: user.id, email: user.email, role: user.role, sessionId: session.id },
-      jwtSecret,
-      '15m',
-    );
+    await this.saveSession(session);
 
     return {
-      accessToken: newAccessToken,
+      accessToken: issueAccess(),
       refreshToken: newRefreshToken,
     };
   }
@@ -1032,11 +1109,14 @@ export class AuthService {
    * Logout
    */
   async logout(sessionId: string, actorId: string, ipAddress: string): Promise<boolean> {
-    const session = this.sessions.get(sessionId);
+    const session = await this.getSessionAuthoritative(sessionId);
     if (session) {
       session.isRevoked = true;
       session.revokedAt = new Date();
-      void persistSession(session);
+      session.graceRefreshToken = null;
+      session.previousRefreshTokenHash = null;
+      session.rotationGraceUntil = null;
+      await this.saveSession(session);
 
       await this.auditService.record({
         actorId,
@@ -1088,6 +1168,10 @@ export class AuthService {
 
     session.isRevoked = true;
     session.revokedAt = new Date();
+    session.graceRefreshToken = null;
+    session.previousRefreshTokenHash = null;
+    session.rotationGraceUntil = null;
+    await this.saveSession(session);
 
     await this.auditService.record({
       actorId: requestingUserId,
@@ -1113,6 +1197,10 @@ export class AuthService {
       if (session.userId === userId && session.id !== currentSessionId && !session.isRevoked) {
         session.isRevoked = true;
         session.revokedAt = new Date();
+        session.graceRefreshToken = null;
+        session.previousRefreshTokenHash = null;
+        session.rotationGraceUntil = null;
+        await this.saveSession(session);
         count++;
       }
     }
@@ -1296,6 +1384,11 @@ export class AuthService {
     for (const session of this.sessions.values()) {
       if (session.userId === user.id) {
         session.isRevoked = true;
+        session.revokedAt = new Date();
+        session.graceRefreshToken = null;
+        session.previousRefreshTokenHash = null;
+        session.rotationGraceUntil = null;
+        await this.saveSession(session);
       }
     }
 

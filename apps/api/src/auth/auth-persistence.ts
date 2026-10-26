@@ -133,6 +133,9 @@ function deserializeSession(raw: PersistedSessionJson | SessionRecord): SessionR
     ...raw,
     expiresAt: new Date(raw.expiresAt),
     revokedAt: raw.revokedAt ? new Date(raw.revokedAt) : null,
+    previousRefreshTokenHash: raw.previousRefreshTokenHash ?? null,
+    rotationGraceUntil: raw.rotationGraceUntil ?? null,
+    graceRefreshToken: raw.graceRefreshToken ?? null,
   };
 }
 
@@ -159,15 +162,47 @@ export async function loadPersistedSessions(): Promise<SessionRecord[]> {
   }
 }
 
+export async function loadPersistedSessionById(
+  sessionId: string,
+): Promise<SessionRecord | null> {
+  const prisma = getPrisma();
+  if (!prisma) return null;
+  try {
+    await ensureSchema(prisma);
+    const rows = (await prisma.$queryRawUnsafe(
+      `SELECT session_json FROM auth_session_store WHERE session_id = $1 LIMIT 1`,
+      sessionId,
+    )) as Array<{ session_json: PersistedSessionJson | string }>;
+    const row = rows[0];
+    if (!row) return null;
+    const payload =
+      typeof row.session_json === 'string'
+        ? (JSON.parse(row.session_json) as PersistedSessionJson)
+        : row.session_json;
+    return deserializeSession(payload);
+  } catch (err) {
+    console.error('[AuthPersistence] session load by id failed:', err);
+    return null;
+  }
+}
+
 export async function persistSession(session: SessionRecord): Promise<void> {
   const prisma = getPrisma();
-  if (!prisma) return;
+  if (!prisma) {
+    console.warn(
+      '[AuthPersistence] DATABASE_URL missing — session will not survive cold starts.',
+    );
+    return;
+  }
   try {
     await ensureSchema(prisma);
     const json = JSON.stringify({
       ...session,
       expiresAt: session.expiresAt.toISOString(),
       revokedAt: session.revokedAt ? session.revokedAt.toISOString() : null,
+      previousRefreshTokenHash: session.previousRefreshTokenHash ?? null,
+      rotationGraceUntil: session.rotationGraceUntil ?? null,
+      graceRefreshToken: session.graceRefreshToken ?? null,
     });
     await prisma.$executeRawUnsafe(
       `
@@ -184,6 +219,7 @@ export async function persistSession(session: SessionRecord): Promise<void> {
     );
   } catch (err) {
     console.error('[AuthPersistence] session save failed:', err);
+    throw err;
   }
 }
 
