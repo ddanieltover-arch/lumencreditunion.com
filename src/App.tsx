@@ -18,6 +18,7 @@ const MainAppContent: React.FC = () => {
     currentView,
     setCurrentView,
     currentUser,
+    authHydrated,
     activeMember,
     isAuthModalOpen,
     closeAuthModal,
@@ -32,13 +33,15 @@ const MainAppContent: React.FC = () => {
 
   // Never show the member dashboard without a real signed-in member
   useEffect(() => {
+    if (!authHydrated) return;
     if (currentView !== 'member') return;
     if (currentUser?.role === 'MEMBER' && activeMember) return;
     setCurrentView('landing');
     if (!currentUser) {
       openAuthModal('login');
     }
-  }, [currentView, currentUser, activeMember, setCurrentView, openAuthModal]);
+  }, [authHydrated, currentView, currentUser, activeMember, setCurrentView, openAuthModal]);
+
 
   // Live email deep-links: ?verifyEmail=… and ?resetToken=…
   useEffect(() => {

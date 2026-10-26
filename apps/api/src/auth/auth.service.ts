@@ -30,7 +30,14 @@ import { AuditService } from '../audit/audit.service';
 import { ConfigService } from '../config/config.service';
 import { CountriesService } from '../countries/countries.service';
 import { EmailService } from '../email/email.service';
-import { loadPersistedUsers, persistUser, deletePersistedUser } from './auth-persistence';
+import {
+  loadPersistedUsers,
+  persistUser,
+  deletePersistedUser,
+  loadPersistedSessions,
+  persistSession,
+  deletePersistedSession,
+} from './auth-persistence';
 import { loadPersistedKycSubmissions } from '../kyc/kyc-persistence';
 import type { AdminUpdateMemberInput } from '@lumenfield/shared';
 
@@ -199,6 +206,25 @@ export class AuthService {
           fullName: sub.memberName || sub.memberEmail,
           countryCode: sub.countryCode,
         });
+      }
+
+      // Restore refresh sessions so admin/member refresh survives serverless cold starts
+      if (this.sessions.size === 0) {
+        const persistedSessions = await loadPersistedSessions();
+        const now = Date.now();
+        let restored = 0;
+        for (const session of persistedSessions) {
+          if (!session?.id) continue;
+          if (session.expiresAt.getTime() < now) {
+            void deletePersistedSession(session.id);
+            continue;
+          }
+          this.sessions.set(session.id, session);
+          restored += 1;
+        }
+        if (restored) {
+          console.log(`[AuthService] Restored ${restored} session(s) from database.`);
+        }
       }
     } catch (err) {
       console.error('[AuthService] Hydration failed:', err);
@@ -850,6 +876,7 @@ export class AuthService {
     };
 
     this.sessions.set(sessionId, session);
+    void persistSession(session);
 
     // Audit log
     await this.auditService.record({
@@ -905,6 +932,7 @@ export class AuthService {
     ipAddress: string,
     userAgent?: string,
   ): Promise<{ accessToken: string; refreshToken: string }> {
+    await this.ensureReady();
     const refreshSecret = this.configService.get('JWT_REFRESH_SECRET');
     const jwtSecret = this.configService.get('JWT_SECRET');
 
@@ -939,6 +967,7 @@ export class AuthService {
     if (session.isRevoked || session.refreshTokenHash !== incomingHash) {
       session.isRevoked = true;
       session.revokedAt = new Date();
+      void persistSession(session);
 
       await this.auditService.record({
         actorId: user.id,
@@ -985,6 +1014,7 @@ export class AuthService {
     session.refreshTokenHash = hashToken(newRefreshToken);
     session.tokenVersion = nextVersion;
     session.lastActiveAt = new Date().toISOString();
+    void persistSession(session);
 
     const newAccessToken = signAccessToken(
       { sub: user.id, email: user.email, role: user.role, sessionId: session.id },
@@ -1006,6 +1036,7 @@ export class AuthService {
     if (session) {
       session.isRevoked = true;
       session.revokedAt = new Date();
+      void persistSession(session);
 
       await this.auditService.record({
         actorId,

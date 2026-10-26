@@ -42,6 +42,34 @@ import {
   bankIdentityFromAuthUser,
 } from '../data/mockData';
 
+/** Single-flight refresh so React Strict Mode double-mount does not look like token replay. */
+let refreshInFlight: Promise<{ accessToken: string; refreshToken: string }> | null = null;
+
+async function refreshAccessToken(
+  token: string,
+): Promise<{ accessToken: string; refreshToken: string }> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    const res = await fetch('/auth/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: token }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(
+        (data as { message?: string }).message || 'Session invalidated during token rotation.',
+      ) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
+    }
+    return data as { accessToken: string; refreshToken: string };
+  })().finally(() => {
+    refreshInFlight = null;
+  });
+  return refreshInFlight;
+}
+
 interface ToastInfo {
   id: string;
   message: string;
@@ -210,6 +238,8 @@ interface AppContextType {
     countryCode: string;
     mfaEnabled: boolean;
   } | null;
+  /** False until the initial localStorage refresh attempt finishes (success or failure). */
+  authHydrated: boolean;
   setCurrentUser: React.Dispatch<React.SetStateAction<AppContextType['currentUser']>>;
   authToken: string | null;
   setAuthToken: (token: string | null) => void;
@@ -848,6 +878,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   }, []);
 
   const [currentUser, setCurrentUser] = useState<AppContextType['currentUser']>(null);
+  const [authHydrated, setAuthHydrated] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState<string | null>(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
@@ -926,17 +957,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Initialize with a live authenticated session from server
   useEffect(() => {
+    let cancelled = false;
     const initSession = async () => {
       try {
         const storedRefresh = localStorage.getItem('lumenfield_refresh_token');
         if (storedRefresh) {
-          const res = await fetch('/auth/refresh', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken: storedRefresh }),
-          });
-          if (res.ok) {
-            const data = await res.json();
+          try {
+            const data = await refreshAccessToken(storedRefresh);
+            if (cancelled) return;
             setAuthToken(data.accessToken);
             setRefreshToken(data.refreshToken);
             localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
@@ -945,6 +973,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             });
             if (meRes.ok) {
               const meData = await meRes.json();
+              if (cancelled) return;
               setCurrentUser(meData.user);
               if (meData.user) {
                 ensureMemberForUser(meData.user);
@@ -962,21 +991,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               }
               return;
             }
-          } else {
+          } catch {
             // Stale or expired session on server: clear it
             localStorage.removeItem('lumenfield_refresh_token');
           }
         }
 
         // No valid session — stay signed out on the landing page
-        setCurrentUser(null);
+        if (!cancelled) setCurrentUser(null);
       } catch (err) {
         console.debug('[AppContext] Init session:', err);
-        setCurrentUser(null);
+        if (!cancelled) setCurrentUser(null);
+      } finally {
+        if (!cancelled) setAuthHydrated(true);
       }
     };
 
-    initSession();
+    void initSession();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const openAuthModal = (
@@ -1056,28 +1090,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const rotateTokens = async () => {
-    if (!refreshToken) {
+    const token = refreshToken || localStorage.getItem('lumenfield_refresh_token');
+    if (!token) {
       throw new Error('No active refresh token available.');
     }
-    const res = await fetch('/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
+    try {
+      const data = await refreshAccessToken(token);
+      setAuthToken(data.accessToken);
+      setRefreshToken(data.refreshToken);
+      localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
+      return data;
+    } catch (err) {
       // Replay attack detected or revoked token -> Clear session
       setAuthToken(null);
       setRefreshToken(null);
       localStorage.removeItem('lumenfield_refresh_token');
       setCurrentUser(null);
       setCurrentView('landing');
-      throw new Error(data.message || 'Session invalidated during token rotation.');
+      throw err instanceof Error
+        ? err
+        : new Error('Session invalidated during token rotation.');
     }
-    setAuthToken(data.accessToken);
-    setRefreshToken(data.refreshToken);
-    localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
-    return data;
   };
 
   const registerUser = async (params: any) => {
@@ -2707,6 +2740,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         convertCurrency,
         resetDemoData,
         currentUser,
+        authHydrated,
         setCurrentUser,
         authToken,
         setAuthToken,

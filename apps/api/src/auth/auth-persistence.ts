@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import type { UserRecord } from './auth.service';
+import type { SessionRecord, UserRecord } from './auth.service';
 
 type GlobalPrisma = typeof globalThis & { __lumenPrisma?: PrismaClient };
 
@@ -34,6 +34,22 @@ async function ensureSchema(prisma: PrismaClient): Promise<void> {
         prisma.$executeRawUnsafe(`
           CREATE UNIQUE INDEX IF NOT EXISTS auth_runtime_store_email_idx
           ON auth_runtime_store (lower(email))
+        `),
+      )
+      .then(() =>
+        prisma.$executeRawUnsafe(`
+          CREATE TABLE IF NOT EXISTS auth_session_store (
+            session_id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            session_json JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          )
+        `),
+      )
+      .then(() =>
+        prisma.$executeRawUnsafe(`
+          CREATE INDEX IF NOT EXISTS auth_session_store_user_idx
+          ON auth_session_store (user_id)
         `),
       )
       .then(() => undefined)
@@ -101,7 +117,86 @@ export async function deletePersistedUser(userId: string): Promise<void> {
   try {
     await ensureSchema(prisma);
     await prisma.$executeRawUnsafe(`DELETE FROM auth_runtime_store WHERE user_id = $1`, userId);
+    await prisma.$executeRawUnsafe(`DELETE FROM auth_session_store WHERE user_id = $1`, userId);
   } catch (err) {
     console.error('[AuthPersistence] delete failed:', err);
+  }
+}
+
+type PersistedSessionJson = Omit<SessionRecord, 'expiresAt' | 'revokedAt'> & {
+  expiresAt: string;
+  revokedAt: string | null;
+};
+
+function deserializeSession(raw: PersistedSessionJson | SessionRecord): SessionRecord {
+  return {
+    ...raw,
+    expiresAt: new Date(raw.expiresAt),
+    revokedAt: raw.revokedAt ? new Date(raw.revokedAt) : null,
+  };
+}
+
+export async function loadPersistedSessions(): Promise<SessionRecord[]> {
+  const prisma = getPrisma();
+  if (!prisma) return [];
+  try {
+    await ensureSchema(prisma);
+    const rows = (await prisma.$queryRawUnsafe(
+      `SELECT session_json FROM auth_session_store`,
+    )) as Array<{ session_json: PersistedSessionJson | string }>;
+    return rows
+      .map((row) => {
+        const payload =
+          typeof row.session_json === 'string'
+            ? (JSON.parse(row.session_json) as PersistedSessionJson)
+            : row.session_json;
+        return deserializeSession(payload);
+      })
+      .filter((s) => s?.id);
+  } catch (err) {
+    console.error('[AuthPersistence] session load failed:', err);
+    return [];
+  }
+}
+
+export async function persistSession(session: SessionRecord): Promise<void> {
+  const prisma = getPrisma();
+  if (!prisma) return;
+  try {
+    await ensureSchema(prisma);
+    const json = JSON.stringify({
+      ...session,
+      expiresAt: session.expiresAt.toISOString(),
+      revokedAt: session.revokedAt ? session.revokedAt.toISOString() : null,
+    });
+    await prisma.$executeRawUnsafe(
+      `
+      INSERT INTO auth_session_store (session_id, user_id, session_json, updated_at)
+      VALUES ($1, $2, $3::jsonb, NOW())
+      ON CONFLICT (session_id) DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        session_json = EXCLUDED.session_json,
+        updated_at = NOW()
+      `,
+      session.id,
+      session.userId,
+      json,
+    );
+  } catch (err) {
+    console.error('[AuthPersistence] session save failed:', err);
+  }
+}
+
+export async function deletePersistedSession(sessionId: string): Promise<void> {
+  const prisma = getPrisma();
+  if (!prisma) return;
+  try {
+    await ensureSchema(prisma);
+    await prisma.$executeRawUnsafe(
+      `DELETE FROM auth_session_store WHERE session_id = $1`,
+      sessionId,
+    );
+  } catch (err) {
+    console.error('[AuthPersistence] session delete failed:', err);
   }
 }

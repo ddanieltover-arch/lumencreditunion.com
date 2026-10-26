@@ -94,6 +94,7 @@ export const AdminPortal: React.FC = () => {
     showToast,
     openSecurityModal,
     currentUser,
+    authHydrated,
     openAuthModal,
     logoutUser,
     adminKycQueue,
@@ -389,12 +390,13 @@ export const AdminPortal: React.FC = () => {
     }
   }, [registeredMembers, selectedMemberId]);
 
-  // Guests landing on /admin: open sign-in immediately
+  // Guests landing on /admin: open sign-in only after session restore finishes
   useEffect(() => {
+    if (!authHydrated) return;
     if (!currentUser) {
       openAuthModal('login');
     }
-  }, [currentUser, openAuthModal]);
+  }, [authHydrated, currentUser, openAuthModal]);
 
   const startAdminSignIn = async () => {
     if (currentUser) {
@@ -445,6 +447,22 @@ export const AdminPortal: React.FC = () => {
       setConfirmed(false);
     }
   };
+
+  if (!authHydrated && !currentUser) {
+    return (
+      <div className="w-full min-h-screen bg-[#F4F7F6] text-[#0E1B1F] flex flex-col font-sans">
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-white rounded-2xl shadow-xl border border-[#DCE5E3] p-8 text-center space-y-3">
+            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto bg-[#E3F3F1] border border-[#0F766E]/30 text-[#0A3D3F]">
+              <KeyRound className="w-8 h-8" />
+            </div>
+            <h2 className="text-xl font-bold font-display text-[#0E1B1F]">Restoring session…</h2>
+            <p className="text-sm text-[#4A5B60]">Checking your administrator sign-in.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (currentUser?.role !== 'SUPER_ADMIN') {
     const isGuest = !currentUser;
