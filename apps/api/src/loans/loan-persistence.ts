@@ -1,5 +1,4 @@
-import type { PrismaClient } from '@prisma/client';
-import { getPrisma } from '../db/prisma';
+import { getPrisma, type SqlClient } from '../db/prisma';
 
 export type PersistedLoanApplication = {
   id: string;
@@ -20,7 +19,7 @@ export type PersistedLoanApplication = {
 
 let schemaReady: Promise<void> | null = null;
 
-async function ensureSchema(prisma: PrismaClient): Promise<void> {
+async function ensureSchema(prisma: SqlClient): Promise<void> {
   if (!schemaReady) {
     schemaReady = prisma
       .$executeRawUnsafe(`

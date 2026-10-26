@@ -1,10 +1,9 @@
-import type { PrismaClient } from '@prisma/client';
 import type { KycSubmission } from '@lumenfield/shared';
-import { getPrisma } from '../db/prisma';
+import { getPrisma, type SqlClient } from '../db/prisma';
 
 let schemaReady: Promise<void> | null = null;
 
-async function ensureSchema(prisma: PrismaClient): Promise<void> {
+async function ensureSchema(prisma: SqlClient): Promise<void> {
   if (!schemaReady) {
     schemaReady = prisma
       .$executeRawUnsafe(`

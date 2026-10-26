@@ -1,6 +1,5 @@
-import type { PrismaClient } from '@prisma/client';
 import type { CardCurrency, CardStatus, CardTransactionRecord } from '@lumenfield/shared';
-import { getPrisma } from '../db/prisma';
+import { getPrisma, type SqlClient } from '../db/prisma';
 
 export type PersistedCard = {
   id: string;
@@ -32,7 +31,7 @@ export type PersistedCardSnapshot = {
 
 let schemaReady: Promise<void> | null = null;
 
-async function ensureSchema(prisma: PrismaClient): Promise<void> {
+async function ensureSchema(prisma: SqlClient): Promise<void> {
   if (!schemaReady) {
     schemaReady = prisma
       .$executeRawUnsafe(`

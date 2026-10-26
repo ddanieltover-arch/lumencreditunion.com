@@ -29,7 +29,16 @@ export class AuthController {
       const ip = (req.ip || '127.0.0.1').toString();
       const result = await this.authService.login(req.body, ip, req.headers['user-agent']);
       res.json(result);
-    } catch (err) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Never surface DB/ORM internals to the sign-in modal
+      if (/prisma|postgres|database|ECONNREFUSED|timeout/i.test(message)) {
+        console.error('[AuthController] Login failed (sanitized):', message);
+        const safe: any = new Error('Sign-in temporarily unavailable. Please try again in a moment.');
+        safe.statusCode = 503;
+        next(safe);
+        return;
+      }
       next(err);
     }
   };
