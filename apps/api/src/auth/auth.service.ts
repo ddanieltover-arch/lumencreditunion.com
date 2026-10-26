@@ -268,7 +268,17 @@ export class AuthService {
   private saveUser(user: UserRecord) {
     user.updatedAt = new Date().toISOString();
     this.users.set(user.id, user);
-    void persistUser(user);
+    // Fire-and-forget with logging; critical paths also await persistUserDurable
+    void persistUser(user).catch((err: unknown) => {
+      console.error('[AuthService] persistUser failed:', err);
+    });
+  }
+
+  /** Awaited durable write — use on register / profile mutations that must survive cold starts. */
+  private async saveUserDurable(user: UserRecord): Promise<void> {
+    user.updatedAt = new Date().toISOString();
+    this.users.set(user.id, user);
+    await persistUser(user);
   }
 
   /**
@@ -580,7 +590,7 @@ export class AuthService {
       void this.emailService.sendWelcomeEmail(user.email, user.fullName);
     }
 
-    this.saveUser(user);
+    await this.saveUserDurable(user);
 
     // 6. Audit log
     await this.auditService.record({
@@ -1501,7 +1511,7 @@ export class AuthService {
     }
     if (input.emailVerified !== undefined) user.emailVerified = input.emailVerified;
 
-    this.saveUser(user);
+    await this.saveUserDurable(user);
 
     await this.auditService.record({
       actorId: adminId,

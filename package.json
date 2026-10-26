@@ -12,6 +12,8 @@
     "start": "tsx server.ts",
     "dev:api": "tsx apps/api/src/main.ts",
     "build": "vite build",
+    "postinstall": "npm run prisma:generate --workspace=@lumenfield/db --if-present",
+    "prisma:generate": "npx prisma generate --schema=packages/db/prisma/schema.prisma",
     "test": "vitest run apps/api/tests --test-timeout 15000",
     "test:e2e": "vitest run apps/api/tests/e2e-journey.spec.ts",
     "audit": "npm audit --audit-level=high || true",

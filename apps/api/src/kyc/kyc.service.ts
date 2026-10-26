@@ -314,7 +314,7 @@ export class KycService {
     };
 
     this.indexSubmission(submission);
-    void persistKycSubmission(submission);
+    await persistKycSubmission(submission);
 
     // 5. Audit Log (HARD RULE 6)
     await this.auditService.record({

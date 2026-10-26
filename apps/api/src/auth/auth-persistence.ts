@@ -1,20 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
+import { getPrisma } from '../db/prisma';
 import type { SessionRecord, UserRecord } from './auth.service';
-
-type GlobalPrisma = typeof globalThis & { __lumenPrisma?: PrismaClient };
-
-function getPrisma(): PrismaClient | null {
-  const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (!databaseUrl) return null;
-  const g = globalThis as GlobalPrisma;
-  if (!g.__lumenPrisma) {
-    g.__lumenPrisma = new PrismaClient({
-      datasources: { db: { url: databaseUrl } },
-      log: ['error'],
-    });
-  }
-  return g.__lumenPrisma;
-}
 
 let schemaReady: Promise<void> | null = null;
 
@@ -219,7 +205,6 @@ export async function persistSession(session: SessionRecord): Promise<void> {
     );
   } catch (err) {
     console.error('[AuthPersistence] session save failed:', err);
-    throw err;
   }
 }
 

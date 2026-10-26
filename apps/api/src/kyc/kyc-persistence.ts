@@ -1,20 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import type { KycSubmission } from '@lumenfield/shared';
-
-type GlobalPrisma = typeof globalThis & { __lumenPrisma?: PrismaClient };
-
-function getPrisma(): PrismaClient | null {
-  const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (!databaseUrl) return null;
-  const g = globalThis as GlobalPrisma;
-  if (!g.__lumenPrisma) {
-    g.__lumenPrisma = new PrismaClient({
-      datasources: { db: { url: databaseUrl } },
-      log: ['error'],
-    });
-  }
-  return g.__lumenPrisma;
-}
+import { getPrisma } from '../db/prisma';
 
 let schemaReady: Promise<void> | null = null;
 

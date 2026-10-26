@@ -144,7 +144,9 @@ export function createApiApp(
   const configService = ConfigService.getInstance();
   const countriesController = new CountriesController();
   const auditService =
-    auditServiceOverride || kycServiceOverride?.auditService || new AuditService();
+    auditServiceOverride ||
+    kycServiceOverride?.auditService ||
+    AuditService.getInstance();
   const authService =
     authServiceOverride || AuthService.getInstance(auditService, configService);
   const kycService = kycServiceOverride || KycService.getInstance();
@@ -616,7 +618,8 @@ export function createApiApp(
     authenticateJwt,
     requireRole(['SUPER_ADMIN']),
     async (_req: Request, res: Response) => {
-      const logs = await auditService.getLogs();
+      await auditService.ensureReady();
+      const logs = await auditService.getLogs(200);
       res.json(logs);
     },
   );
@@ -855,6 +858,7 @@ export function createApiApp(
         await Promise.all([
           authService.ensureReady(),
           kycService.ensureReady(),
+          auditService.ensureReady(),
           ensureFundingStoreReady(),
           ensureLoanStoreReady(),
           replayApprovedFundingIntoLedger(),
@@ -871,6 +875,59 @@ export function createApiApp(
         );
         const accounts = ledgerService.getAllAccounts();
         const ledgerTransactions = await ledgerService.getAllTransactions();
+        const auditLogs = await auditService.getLogs(200);
+        const fundingStore = await ensureFundingStoreReady();
+        type RecentFundingRow = {
+          id: string;
+          memberId: string;
+          memberName: string;
+          reference: string;
+          date: string;
+          amount: number;
+          currency: SupportedCurrency;
+          source: string;
+          reason: string;
+          adminUser: string;
+        };
+        const recentFunding: RecentFundingRow[] = Array.from(fundingStore.values())
+          .filter((r) => r.status === 'APPROVED')
+          .sort((a, b) => (b.reviewedAt || b.updatedAt || '').localeCompare(a.reviewedAt || a.updatedAt || ''))
+          .slice(0, 50)
+          .map((r) => ({
+            id: r.id,
+            memberId: r.memberId,
+            memberName: r.memberName,
+            reference: r.ledgerTransactionId || `FR-${r.id.slice(0, 12).toUpperCase()}`,
+            date: (r.reviewedAt || r.updatedAt || r.createdAt || '').slice(0, 10),
+            amount: r.amountMinor / 100,
+            currency: r.currency,
+            source: r.sourceHint || 'DEPOSIT',
+            reason: r.reason,
+            adminUser: r.reviewedById || 'Admin',
+          }));
+        // Also surface direct admin TEST credits from the ledger
+        const nameById = new Map(directory.map((m) => [m.id, m.fullName]));
+        for (const tx of ledgerTransactions) {
+          const source = String(tx.source || '').toUpperCase();
+          if (source !== 'TEST' && source !== 'DEPOSIT') continue;
+          if (recentFunding.some((f) => f.reference === tx.reference || f.id === tx.id)) continue;
+          const credit = (tx.entries || []).find((e: any) => e.direction === 'CREDIT' && e.accountType === 'MEMBER_WALLET');
+          const memberId = String(tx.metadata?.memberId || credit?.accountId?.replace(/^wallet-/, '').replace(/-[a-z]{3}$/i, '') || '');
+          const currency = (tx.currency || 'USD') as SupportedCurrency;
+          recentFunding.push({
+            id: tx.id,
+            memberId,
+            memberName: nameById.get(memberId) || memberId || 'Member',
+            reference: tx.reference,
+            date: (tx.createdAt || '').slice(0, 10),
+            amount: Number(credit?.amountMinor || 0) / 100,
+            currency,
+            source,
+            reason: tx.description || 'Wallet credit',
+            adminUser: tx.createdById || 'Admin',
+          });
+        }
+        recentFunding.sort((a, b) => String(b.date).localeCompare(String(a.date)));
         const flagged = transfersService.getFlaggedTransfers();
         const reconcile = ledgerService.reconcileBalances();
 
@@ -924,6 +981,8 @@ export function createApiApp(
           loans,
           kycSubmissions: allKyc,
           ledgerTransactions,
+          recentFunding: recentFunding.slice(0, 50),
+          auditLogs,
         });
       } catch (err) {
         next(err);
@@ -1275,6 +1334,7 @@ export function createApiApp(
     requireKycApproved(kycService),
     async (req: Request, res: Response, next) => {
       try {
+        await Promise.all([ledgerService.ensureReady(), authService.ensureReady()]);
         const from = String(req.body?.fromCurrency || '').toUpperCase() as SupportedCurrency;
         const to = String(req.body?.toCurrency || '').toUpperCase() as SupportedCurrency;
         const amountMajor = Number(req.body?.amount);

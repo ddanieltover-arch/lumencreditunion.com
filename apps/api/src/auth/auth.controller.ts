@@ -82,6 +82,7 @@ export class AuthController {
 
   getCurrentUser = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await this.authService.ensureReady();
       const user = this.authService.getUserById(req.user!.id);
       if (!user) {
         res.status(404).json({ statusCode: 404, message: 'User not found.' });

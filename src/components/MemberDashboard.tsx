@@ -391,7 +391,7 @@ export const MemberDashboard: React.FC = () => {
     walletTxPage * walletTxLimit
   );
 
-  const handleQuickTransfer = () => {
+  const handleQuickTransfer = async () => {
     const amt = parseFloat(quickAmount);
     if (isNaN(amt) || amt <= 0) {
       showToast('Please enter a valid transfer amount.', 'warning');
@@ -401,7 +401,7 @@ export const MemberDashboard: React.FC = () => {
       showToast('Enter a recipient name or member ID.', 'warning');
       return;
     }
-    const res = sendTransfer({
+    const res = await sendTransfer({
       recipient: quickTo.trim(),
       amount: amt,
       currency: 'USD',
@@ -414,7 +414,7 @@ export const MemberDashboard: React.FC = () => {
     }
   };
 
-  const handleModalSend = () => {
+  const handleModalSend = async () => {
     const amt = parseFloat(sendAmount);
     if (isNaN(amt) || amt <= 0) {
       showToast('Please enter a valid transfer amount.', 'warning');
@@ -424,7 +424,7 @@ export const MemberDashboard: React.FC = () => {
       showToast('Enter a recipient name or member ID.', 'warning');
       return;
     }
-    const res = sendTransfer({
+    const res = await sendTransfer({
       recipient: sendRecipient.trim(),
       amount: amt,
       currency: sendCurrency,
@@ -438,7 +438,7 @@ export const MemberDashboard: React.FC = () => {
     }
   };
 
-  const handleWithdraw = () => {
+  const handleWithdraw = async () => {
     const amt = parseFloat(withdrawAmount);
     if (isNaN(amt) || amt <= 0) {
       showToast('Enter a valid withdrawal amount.', 'warning');
@@ -448,8 +448,8 @@ export const MemberDashboard: React.FC = () => {
       showToast('Choose or enter a withdrawal destination.', 'warning');
       return;
     }
-    const res = sendTransfer({
-      recipient: `Withdraw → ${withdrawDestination.trim()}`,
+    const res = await sendTransfer({
+      recipient: withdrawDestination.trim(),
       amount: amt,
       currency: withdrawCurrency,
     });
@@ -461,7 +461,7 @@ export const MemberDashboard: React.FC = () => {
     }
   };
 
-  const handleSwap = () => {
+  const handleSwap = async () => {
     const amt = parseFloat(swapAmount);
     if (isNaN(amt) || amt <= 0) {
       showToast('Enter valid swap amount.', 'warning');
@@ -471,9 +471,11 @@ export const MemberDashboard: React.FC = () => {
       showToast('Choose two different currencies to swap.', 'warning');
       return;
     }
-    const res = convertCurrency(swapFrom, swapTo, amt);
+    const res = await convertCurrency(swapFrom, swapTo, amt);
     if (!res.success) {
       showToast(res.message, 'warning');
+    } else {
+      setSwapAmount('');
     }
   };
 
@@ -594,7 +596,7 @@ export const MemberDashboard: React.FC = () => {
     }
   };
 
-  const handleExternalRailTransfer = () => {
+  const handleExternalRailTransfer = async () => {
     const amt = parseFloat(bankAmount);
     if (isNaN(amt) || amt <= 0) {
       showToast('Enter a valid amount for the external transfer.', 'warning');
@@ -604,9 +606,9 @@ export const MemberDashboard: React.FC = () => {
       showToast('Enter a destination account, IBAN, or wallet address.', 'warning');
       return;
     }
-    const recipient = `${bankRail}: ${bankDestination.trim()}`;
-    const res = sendTransfer({
-      recipient,
+    // Member-to-member rail expects a Lumenfield member id/email — not IBAN/wallet labels
+    const res = await sendTransfer({
+      recipient: bankDestination.trim(),
       amount: amt,
       currency: bankRail === 'SEPA' ? 'EUR' : bankRail === 'FASTER' ? 'GBP' : 'USD',
     });

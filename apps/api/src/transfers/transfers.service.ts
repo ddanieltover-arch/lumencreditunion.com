@@ -463,6 +463,9 @@ export class TransfersService {
     input: MemberTransferInput,
     ipAddress: string,
   ): Promise<TransferRecord> {
+    await this.ledgerService.ensureReady();
+    await this.authService.ensureReady();
+
     // 1. Idempotency Check
     if (this.idempotencyStore.has(input.idempotencyKey)) {
       return this.idempotencyStore.get(input.idempotencyKey)!;

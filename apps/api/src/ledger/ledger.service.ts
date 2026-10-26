@@ -134,32 +134,36 @@ export class LedgerService {
     const snapshot = await loadPersistedLedgerSnapshot();
     if (!snapshot?.transactions?.length && !snapshot?.accounts?.length) return;
 
-    // Prefer durable snapshot when present (cold start / new process)
-    if (this.transactions.length === 0) {
-      for (const acc of snapshot.accounts || []) {
-        if (!acc?.id) continue;
-        this.accounts.set(acc.id, acc);
-      }
-      for (const [key, accountId] of snapshot.memberWallets || []) {
-        if (key && accountId) this.memberWallets.set(key, accountId);
-      }
-      if (Array.isArray(snapshot.transactions) && snapshot.transactions.length) {
-        this.transactions = snapshot.transactions.slice();
-        this.idempotencyStore.clear();
-        for (const tx of this.transactions) {
-          if (tx?.idempotencyKey) {
-            this.idempotencyStore.set(tx.idempotencyKey, tx);
-          }
+    const snapshotTxCount = Array.isArray(snapshot.transactions) ? snapshot.transactions.length : 0;
+    // Load when empty, or when DB has a richer book than memory (repairs wipe races)
+    const shouldLoad = this.transactions.length === 0 || snapshotTxCount > this.transactions.length;
+    if (!shouldLoad) return;
+
+    for (const acc of snapshot.accounts || []) {
+      if (!acc?.id) continue;
+      this.accounts.set(acc.id, acc);
+    }
+    for (const [key, accountId] of snapshot.memberWallets || []) {
+      if (key && accountId) this.memberWallets.set(key, accountId);
+    }
+    if (snapshotTxCount) {
+      this.transactions = snapshot.transactions.slice();
+      this.idempotencyStore.clear();
+      for (const tx of this.transactions) {
+        if (tx?.idempotencyKey) {
+          this.idempotencyStore.set(tx.idempotencyKey, tx);
         }
       }
-      console.log(
-        `[Ledger] Restored ${this.transactions.length} transaction(s) and ${this.accounts.size} account(s) from database.`,
-      );
     }
+    console.log(
+      `[Ledger] Restored ${this.transactions.length} transaction(s) and ${this.accounts.size} account(s) from database.`,
+    );
   }
 
   private schedulePersist(): void {
-    void this.persistNow();
+    void this.persistNow().catch((err: unknown) => {
+      console.error('[Ledger] persist failed:', err);
+    });
   }
 
   private async persistNow(): Promise<void> {
@@ -331,6 +335,8 @@ export class LedgerService {
     actorRole: 'SUPER_ADMIN' | 'MEMBER',
     ipAddress: string,
   ): Promise<LedgerTransactionRecord> {
+    await this.ensureReady();
+
     // 1. Idempotency Check (Replay Attack / Duplicate Prevention)
     if (this.idempotencyStore.has(input.idempotencyKey)) {
       return this.idempotencyStore.get(input.idempotencyKey)!;
@@ -448,7 +454,7 @@ export class LedgerService {
       }
     }
 
-    this.schedulePersist();
+    await this.persistNow();
 
     // Record audit log
     await this.auditService.record({

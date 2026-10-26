@@ -1,5 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import type { PrismaClient } from '@prisma/client';
 import type { CardCurrency, CardStatus, CardTransactionRecord } from '@lumenfield/shared';
+import { getPrisma } from '../db/prisma';
 
 export type PersistedCard = {
   id: string;
@@ -28,21 +29,6 @@ export type PersistedCardSnapshot = {
   transactions: CardTransactionRecord[];
   updatedAt: string;
 };
-
-type GlobalPrisma = typeof globalThis & { __lumenPrisma?: PrismaClient };
-
-function getPrisma(): PrismaClient | null {
-  const databaseUrl = process.env.DATABASE_URL?.trim();
-  if (!databaseUrl) return null;
-  const g = globalThis as GlobalPrisma;
-  if (!g.__lumenPrisma) {
-    g.__lumenPrisma = new PrismaClient({
-      datasources: { db: { url: databaseUrl } },
-      log: ['error'],
-    });
-  }
-  return g.__lumenPrisma;
-}
 
 let schemaReady: Promise<void> | null = null;
 

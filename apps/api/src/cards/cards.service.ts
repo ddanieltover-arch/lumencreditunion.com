@@ -109,13 +109,16 @@ export class CardsService {
   private async hydrateFromStore(): Promise<void> {
     const snapshot = await loadPersistedCardSnapshot();
     if (!snapshot) return;
-    if (this.cards.size === 0 && Array.isArray(snapshot.cards)) {
-      for (const card of snapshot.cards) {
+    const snapCards = Array.isArray(snapshot.cards) ? snapshot.cards : [];
+    if (this.cards.size === 0 || snapCards.length > this.cards.size) {
+      for (const card of snapCards) {
         if (card?.id) this.cards.set(card.id, card as StoredCard);
       }
     }
     if (
-      this.cardTransactions.length === 0 &&
+      (this.cardTransactions.length === 0 ||
+        (Array.isArray(snapshot.transactions) &&
+          snapshot.transactions.length > this.cardTransactions.length)) &&
       Array.isArray(snapshot.transactions) &&
       snapshot.transactions.length
     ) {
@@ -129,7 +132,9 @@ export class CardsService {
   }
 
   private schedulePersist(): void {
-    void this.persistNow();
+    void this.persistNow().catch((err: unknown) => {
+      console.error('[Cards] persist failed:', err);
+    });
   }
 
   private async persistNow(): Promise<void> {
@@ -201,6 +206,7 @@ export class CardsService {
     input: CreateCardInput,
     ipAddress: string,
   ): Promise<CardCreationResponse> {
+    await this.ensureReady();
     // 1. Enforce KYC verification
     const isApproved = this.kycService.isMemberKycApproved(memberId);
     if (!isApproved) {
@@ -348,6 +354,7 @@ export class CardsService {
     newStatus: CardStatus,
     ipAddress: string,
   ): Promise<VirtualCardRecord> {
+    await this.ensureReady();
     const card = this.cards.get(cardId);
     if (!card) {
       const err: any = new Error(`Card ${cardId} not found.`);
@@ -639,6 +646,7 @@ export class CardsService {
     input: UpdateCardLimitsInput,
     ipAddress: string,
   ): Promise<VirtualCardRecord> {
+    await this.ensureReady();
     const card = this.cards.get(cardId);
     if (!card) {
       const err: any = new Error(`Card ${cardId} not found.`);
@@ -740,6 +748,7 @@ export class CardsService {
     transaction: CardTransactionRecord;
     ledgerTransaction?: any;
   }> {
+    await this.ensureReady();
     const card = this.cards.get(cardId);
     if (!card) {
       const err: any = new Error(`Card ${cardId} not found.`);

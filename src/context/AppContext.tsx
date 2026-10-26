@@ -123,7 +123,7 @@ interface AppContextType {
     recipient: string;
     amount: number;
     currency: Currency;
-  }) => { success: boolean; message: string };
+  }) => Promise<{ success: boolean; message: string }>;
 
   // Virtual Card State & API Actions
   virtualCards: VirtualCardRecord[];
@@ -261,7 +261,12 @@ interface AppContextType {
   logoutUser: (options?: { redirectToLanding?: boolean; silent?: boolean }) => Promise<void>;
   downloadStatement: (format: 'csv' | 'pdf', currency?: string) => Promise<void>;
 
-  convertCurrency: (from: Currency, to: Currency, amount: number) => { success: boolean; message: string };
+  convertCurrency: (
+    from: Currency,
+    to: Currency,
+    amount: number,
+  ) => Promise<{ success: boolean; message: string }>;
+  fetchMemberLoans: (tokenOverride?: string | null) => Promise<void>;
 
   isTermsModalOpen: boolean;
   openTermsModal: () => void;
@@ -775,6 +780,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const mapRemoteAuditLogs = (remote: any[]): AuditLogEntry[] =>
+    (Array.isArray(remote) ? remote : []).map((log) => {
+      const roleRaw = String(log.actorRole || 'SYSTEM').toUpperCase();
+      const role: AuditLogEntry['role'] =
+        roleRaw === 'SUPER_ADMIN' ? 'Admin' : roleRaw === 'MEMBER' ? 'Member' : 'System';
+      const after = log.afterState && typeof log.afterState === 'object' ? log.afterState : null;
+      const details =
+        after && typeof after === 'object'
+          ? Object.entries(after)
+              .slice(0, 6)
+              .map(([k, v]) => `${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`)
+              .join('; ')
+          : String(log.action || '');
+      return {
+        id: String(log.id || `audit-${log.timestamp || Date.now()}`),
+        timestamp: String(log.timestamp || new Date().toISOString()),
+        actor: String(log.actorId || '—'),
+        role,
+        action: String(log.action || 'ACTION'),
+        target: `${log.targetType || 'TARGET'}:${log.targetId || '—'}`,
+        reference: String(log.targetId || log.id || '—'),
+        details: details || String(log.action || ''),
+      } satisfies AuditLogEntry;
+    });
+
+  const mapRemoteRecentFunding = (remote: any[]): FundingRecord[] =>
+    (Array.isArray(remote) ? remote : []).map((row) => {
+      const rawDate = String(row.date || row.reviewedAt || row.createdAt || '');
+      const parsed = rawDate ? new Date(rawDate) : new Date();
+      const dateLabel = Number.isNaN(parsed.getTime())
+        ? rawDate
+        : parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return {
+        id: String(row.id || `fund-${Date.now()}`),
+        memberId: String(row.memberId || ''),
+        memberName: String(row.memberName || 'Member'),
+        reference: String(row.reference || row.id || '—'),
+        date: dateLabel,
+        amount: Number(row.amount || 0),
+        currency: (row.currency || 'USD') as Currency,
+        source: String(row.source || 'DEPOSIT'),
+        reason: String(row.reason || ''),
+        adminUser: String(row.adminUser || 'Admin'),
+      } satisfies FundingRecord;
+    });
+
+  const fetchMemberLoans = async (tokenOverride?: string | null) => {
+    try {
+      const token = tokenOverride ?? authToken;
+      if (!token) return;
+      const res = await fetch('/loans/mine', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) return;
+      const data = await res.json();
+      const list = Array.isArray(data?.loans) ? data.loans : Array.isArray(data) ? data : [];
+      setLoanApplications(mapRemoteLoans(list));
+    } catch (err) {
+      console.debug('Failed to fetch member loans:', err);
+    }
+  };
+
   const fetchAdminDashboardStats = async (tokenOverride?: string | null) => {
     try {
       const token = tokenOverride ?? authToken;
@@ -805,6 +874,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setLedgerPostings(mapRemoteLedgerTransactions(stats.ledgerTransactions, nameById));
       } else {
         await fetchAdminLedger(token);
+      }
+      if (Array.isArray(stats.recentFunding)) {
+        setRecentFunding(mapRemoteRecentFunding(stats.recentFunding));
+      }
+      if (Array.isArray(stats.auditLogs)) {
+        setAuditLog(mapRemoteAuditLogs(stats.auditLogs));
+      } else if (token) {
+        try {
+          const auditRes = await fetch('/admin/audit-logs', { headers });
+          if (auditRes.ok) {
+            const auditJson = await auditRes.json();
+            setAuditLog(mapRemoteAuditLogs(Array.isArray(auditJson) ? auditJson : auditJson?.logs || []));
+          }
+        } catch {
+          /* ignore */
+        }
       }
     } catch (err) {
       console.debug('Failed to fetch admin dashboard stats:', err);
@@ -988,6 +1073,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
               } else {
                 setCurrentView('member');
                 await fetchMemberWalletActivity(data.accessToken);
+                await fetchMemberLoans(data.accessToken);
               }
               return;
             }
@@ -1062,6 +1148,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentView('member');
       await fetchKycStatus(data.accessToken, data.user);
       await fetchMemberWalletActivity(data.accessToken);
+      await fetchMemberLoans(data.accessToken);
     }
     return data;
   };
@@ -1089,6 +1176,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentView('member');
       await fetchKycStatus(data.accessToken, data.user);
       await fetchMemberWalletActivity(data.accessToken);
+      await fetchMemberLoans(data.accessToken);
     }
     return data;
   };
@@ -1381,8 +1469,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
-  // Send Money (Member action)
-  const sendTransfer = ({
+  // Send Money (Member action) — durable server transfer, then refresh wallet
+  const sendTransfer = async ({
     recipient,
     amount,
     currency,
@@ -1390,7 +1478,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     recipient: string;
     amount: number;
     currency: Currency;
-  }) => {
+  }): Promise<{ success: boolean; message: string }> => {
     if (!activeMember) {
       return { success: false, message: 'Please sign in to send money.' };
     }
@@ -1409,85 +1497,48 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
     }
 
-    // Deduct from sender
-    setMembers((prev) =>
-      prev.map((m) => {
-        if (m.id === activeMember.id) {
-          return {
-            ...m,
-            wallets: {
-              ...m.wallets,
-              [currency]: m.wallets[currency] - amount,
-            },
-          };
-        }
-        // If recipient matches a registered member, credit them!
-        if (
-          m.id.toLowerCase() === recipient.toLowerCase() ||
-          m.name.toLowerCase() === recipient.toLowerCase()
-        ) {
-          return {
-            ...m,
-            wallets: {
-              ...m.wallets,
-              [currency]: (m.wallets[currency] || 0) + amount,
-            },
-          };
-        }
-        return m;
-      })
-    );
+    if (!authToken) {
+      return { success: false, message: 'Your session expired. Please sign in again.' };
+    }
 
-    const now = new Date();
-    const dateFormatted = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const ref = 'TR-' + Math.floor(1000 + Math.random() * 9000);
+    try {
+      const res = await fetch('/wallet/transfer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          recipientQuery: recipient.trim(),
+          amountMinor: Math.round(amount * 100),
+          currency,
+          note: `P2P transfer to ${recipient.trim()}`,
+          idempotencyKey: `idemp-p2p-${activeMember.id}-${Date.now()}`,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          message:
+            (data as { message?: string }).message ||
+            'Transfer failed. Please verify the recipient and try again.',
+        };
+      }
 
-    // Add transaction to history
-    const tx: Transaction = {
-      id: 'tx-' + Date.now(),
-      description: `Transfer to ${recipient}`,
-      date: dateFormatted,
-      timestamp: now.toISOString(),
-      status: 'Completed',
-      amount: -amount,
-      currency: currency,
-      type: 'transfer_out',
-      counterparty: recipient,
-      reference: ref,
-      category: 'Member Transfer',
-    };
-    setTransactions((prev) => [tx, ...prev]);
-
-    // Double entry posting
-    const ledger: LedgerPosting = {
-      id: 'ledg-' + Date.now(),
-      reference: ref,
-      date: now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-      timestamp: now.toISOString(),
-      description: `P2P transfer to ${recipient}`,
-      currency: currency,
-      debitAccount: `Member wallet (${activeMember.name})`,
-      debitAmount: amount,
-      creditAccount: `Destination: ${recipient}`,
-      creditAmount: amount,
-      memberId: activeMember.id,
-      memberName: activeMember.name,
-      adminActor: 'System (P2P Rail)',
-    };
-    setLedgerPostings((prev) => [ledger, ...prev]);
-
-    logAudit(
-      'P2P_TRANSFER',
-      recipient,
-      ref,
-      `Sent ${currency} ${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} to ${recipient}.`,
-      activeMember.email,
-      'Member'
-    );
-
-    showToast(`Transferred ${currency} ${amount.toFixed(2)} to ${recipient} successfully!`, 'success');
-    notifyTransferExecuted(recipient, `${currency} ${amount.toFixed(2)}`).catch(() => {});
-    return { success: true, message: 'Transfer completed instantly.' };
+      await fetchMemberWalletActivity(authToken);
+      showToast(
+        `Transferred ${currency} ${amount.toFixed(2)} to ${recipient} successfully!`,
+        'success',
+      );
+      notifyTransferExecuted(recipient, `${currency} ${amount.toFixed(2)}`).catch(() => {});
+      return { success: true, message: 'Transfer completed successfully.' };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'Transfer failed due to a network error.',
+      };
+    }
   };
 
   // Download Member Statement (CSV and PDF)
@@ -2572,7 +2623,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     showToast(`Updated product rules for ${code}.`, 'success');
   };
 
-  const convertCurrency = (from: Currency, to: Currency, amount: number) => {
+  const convertCurrency = async (from: Currency, to: Currency, amount: number) => {
     if (!activeMember) {
       return { success: false, message: 'Please sign in to convert currency.' };
     }
@@ -2583,57 +2634,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (amount > current) {
       return { success: false, message: `Insufficient ${from} balance.` };
     }
+    if (!authToken) {
+      return { success: false, message: 'Your session expired. Please sign in again.' };
+    }
 
-    // Static test rates
-    const ratesToUSD: Record<Currency, number> = {
-      USD: 1.0,
-      CAD: 0.74,
-      GBP: 1.28,
-      EUR: 1.08,
-    };
-
-    const amountInUSD = amount * ratesToUSD[from];
-    const convertedAmount = amountInUSD / ratesToUSD[to];
-
-    setMembers((prev) =>
-      prev.map((m) => {
-        if (m.id === activeMember.id) {
-          return {
-            ...m,
-            wallets: {
-              ...m.wallets,
-              [from]: m.wallets[from] - amount,
-              [to]: (m.wallets[to] || 0) + convertedAmount,
-            },
-          };
-        }
-        return m;
-      })
-    );
-
-    const now = new Date();
-    const dateFormatted = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    const ref = 'SWAP-' + Math.floor(1000 + Math.random() * 9000);
-
-    setTransactions((prev) => [
-      {
-        id: 'tx-' + Date.now(),
-        description: `Currency Swap ${from} → ${to}`,
-        date: dateFormatted,
-        timestamp: now.toISOString(),
-        status: 'Completed',
-        amount: -amount,
-        currency: from,
-        type: 'currency_swap',
-        counterparty: `Lumenfield FX (+${to} ${convertedAmount.toFixed(2)})`,
-        reference: ref,
-        category: 'FX Swap',
-      },
-      ...prev,
-    ]);
-
-    if (authToken) {
-      fetch('/wallet/swap', {
+    try {
+      const res = await fetch('/wallet/swap', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -2644,14 +2650,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           toCurrency: to,
           amount,
         }),
-      }).catch((e) => console.error('Currency swap sync:', e));
-    }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          success: false,
+          message: (data as { message?: string }).message || 'Currency swap failed.',
+        };
+      }
 
-    showToast(
-      `Converted ${from} ${amount.toFixed(2)} to ${to} ${convertedAmount.toFixed(2)} successfully!`,
-      'success'
-    );
-    return { success: true, message: 'Exchange completed.' };
+      await fetchMemberWalletActivity(authToken);
+      const toMinor = Number((data as any)?.to?.amountMinor || 0);
+      const convertedAmount = toMinor ? toMinor / 100 : amount;
+      showToast(
+        `Converted ${from} ${amount.toFixed(2)} to ${to} ${convertedAmount.toFixed(2)} successfully!`,
+        'success',
+      );
+      return { success: true, message: 'Exchange completed.' };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err?.message || 'Currency swap failed due to a network error.',
+      };
+    }
   };
 
   const resetDemoData = () => {
@@ -2683,6 +2704,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         fetchAdminMembers,
         fetchAdminLedger,
         fetchMemberWalletActivity,
+        fetchMemberLoans,
         transactions,
         loanApplications,
         ledgerPostings,
