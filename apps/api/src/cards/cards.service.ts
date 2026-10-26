@@ -9,7 +9,6 @@ import {
   CardCreationResponse,
   CardTransactionRecord,
   AdminUpdateCardInput,
-  AdminCreateCardInput,
   AdminCreditCardWalletInput,
   formatMoney,
 } from '@lumenfield/shared';
@@ -461,18 +460,9 @@ export class CardsService {
       err.statusCode = 400;
       throw err;
     }
-    if (input.resetSpentToday) {
-      card.spentTodayMinor = 0;
-    }
-    if (input.resetSpentThisMonth) {
-      card.spentThisMonthMinor = 0;
-    }
-
-    const statusChanged = input.status !== undefined && input.status !== card.status;
-    if (statusChanged && input.status) {
+    if (input.status !== undefined) {
       card.status = input.status;
     }
-
     card.updatedAt = new Date().toISOString();
     this.schedulePersist();
 
@@ -486,30 +476,9 @@ export class CardsService {
       afterState: {
         ...this.sanitizeCard(card),
         reason: input.reason || null,
-        resetSpentToday: !!input.resetSpentToday,
-        resetSpentThisMonth: !!input.resetSpentThisMonth,
       },
       ipAddress,
     });
-
-    if (statusChanged && input.status) {
-      const member = this.memberContact(card.memberId);
-      if (member && (input.status === 'FROZEN' || input.status === 'SUSPENDED')) {
-        void this.emailService.sendCardFrozenEmail(member.email, member.fullName, {
-          lastFour: card.lastFour,
-        });
-      } else if (member && input.status === 'ACTIVE') {
-        void this.emailService.sendCardUnfrozenEmail(member.email, member.fullName, {
-          lastFour: card.lastFour,
-        });
-      }
-      this.kycService.addNotification({
-        memberId: card.memberId,
-        title: `Virtual Card ${input.status === 'ACTIVE' ? 'Activated' : input.status === 'FROZEN' ? 'Frozen' : input.status === 'SUSPENDED' ? 'Suspended' : 'Terminated'}`,
-        message: `Virtual card •••• ${card.lastFour} (${card.currency}) status was updated to ${input.status.toLowerCase()} by an administrator.${input.reason ? ` Reason: ${input.reason}` : ''}`,
-        type: input.status === 'ACTIVE' ? 'success' : 'warning',
-      });
-    }
 
     return this.sanitizeCard(card);
   }
@@ -564,13 +533,6 @@ export class CardsService {
       });
     }
 
-    this.kycService.addNotification({
-      memberId: card.memberId,
-      title: `Virtual Card ${status === 'ACTIVE' ? 'Activated' : status === 'FROZEN' ? 'Frozen' : status === 'SUSPENDED' ? 'Suspended' : 'Terminated'}`,
-      message: `Virtual card •••• ${card.lastFour} (${card.currency}) has been set to ${status.toLowerCase()} by an administrator.${reason ? ` Reason: ${reason}` : ''}`,
-      type: status === 'ACTIVE' ? 'success' : 'warning',
-    });
-
     return this.sanitizeCard(card);
   }
 
@@ -600,13 +562,6 @@ export class CardsService {
       beforeState: before,
       afterState: null,
       ipAddress,
-    });
-
-    this.kycService.addNotification({
-      memberId: card.memberId,
-      title: 'Virtual Card Revoked',
-      message: `Virtual card •••• ${card.lastFour} (${card.currency}) has been deleted by an administrator.`,
-      type: 'warning',
     });
 
     return { success: true, id: cardId };
@@ -663,13 +618,6 @@ export class CardsService {
       ipAddress,
     });
 
-    this.kycService.addNotification({
-      memberId: card.memberId,
-      title: 'Card Wallet Credited',
-      message: `${formatMoney({ amountMinor: input.amountMinor, currency: card.currency })} has been credited to your ${card.currency} wallet for virtual card •••• ${card.lastFour}.`,
-      type: 'success',
-    });
-
     return {
       success: true,
       card: this.sanitizeCard(card),
@@ -678,119 +626,6 @@ export class CardsService {
         amountMinor: input.amountMinor,
         currency: card.currency,
       }),
-    };
-  }
-
-  /**
-   * Retrieve all transactions for a specific card (admin view).
-   */
-  adminGetCardTransactions(cardId: string): CardTransactionRecord[] {
-    const card = this.cards.get(cardId);
-    if (!card) {
-      const err: any = new Error(`Card ${cardId} not found.`);
-      err.statusCode = 404;
-      throw err;
-    }
-    return this.cardTransactions
-      .filter((tx) => tx.cardId === cardId)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }
-
-  /**
-   * Admin issue virtual card for a member.
-   */
-  async adminCreateCard(
-    input: AdminCreateCardInput,
-    adminId: string,
-    ipAddress: string,
-  ): Promise<CardCreationResponse> {
-    const user = this.authService.findUserById(input.memberId);
-    const cardholderName = input.cardholderName?.trim() || user?.fullName || 'Lumenfield Member';
-
-    const dailyLimitMinor = input.dailyLimitMinor ?? 100000;
-    const monthlyLimitMinor = input.monthlyLimitMinor ?? 500000;
-
-    if (dailyLimitMinor > monthlyLimitMinor) {
-      const err: any = new Error('Daily limit cannot exceed monthly limit.');
-      err.statusCode = 400;
-      throw err;
-    }
-    const generated = await this.cardProvider.generateCard({
-      memberId: input.memberId,
-      currency: input.currency,
-      cardholderName,
-    });
-
-    const now = new Date().toISOString();
-    const cardId = `crd-${randomUUID()}`;
-
-    const storedCard: StoredCard = {
-      id: cardId,
-      memberId: input.memberId,
-      cardToken: generated.cardToken,
-      lastFour: generated.lastFour,
-      maskedPan: `•••• •••• •••• ${generated.lastFour}`,
-      brand: generated.brand,
-      currency: input.currency,
-      status: 'ACTIVE',
-      cardholderName,
-      expiryMonth: generated.expiryMonth,
-      expiryYear: generated.expiryYear,
-      expiryFormatted: generated.expiryFormatted,
-      dailyLimitMinor,
-      monthlyLimitMinor,
-      spentTodayMinor: 0,
-      spentThisMonthMinor: 0,
-      isVirtual: true,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    this.cards.set(cardId, storedCard);
-    this.schedulePersist();
-
-    await this.auditService.log({
-      actor: adminId,
-      actorRole: 'SUPER_ADMIN',
-      action: 'ADMIN_CREATE_VIRTUAL_CARD',
-      targetType: 'VIRTUAL_CARD',
-      targetId: cardId,
-      beforeState: null,
-      afterState: {
-        id: cardId,
-        memberId: input.memberId,
-        currency: input.currency,
-        lastFour: generated.lastFour,
-        dailyLimitMinor,
-        monthlyLimitMinor,
-      },
-      ipAddress,
-    });
-
-    this.kycService.addNotification({
-      memberId: input.memberId,
-      title: 'Virtual Card Issued',
-      message: `A new ${input.currency} virtual card ending in •••• ${generated.lastFour} was issued for your account by an administrator.`,
-      type: 'success',
-    });
-
-    const member = this.memberContact(input.memberId);
-    if (member) {
-      void this.emailService.sendCardCreatedEmail(member.email, member.fullName, {
-        lastFour: generated.lastFour,
-        currency: input.currency,
-      });
-    }
-
-    return {
-      card: this.sanitizeCard(storedCard),
-      oneTimeCredentials: {
-        fullPan: generated.fullPan,
-        cvv: generated.cvv,
-        expiry: generated.expiryFormatted,
-        warningNotice:
-          'Save these credentials now. For your security, the full card number and CVV are never stored in Lumenfield and cannot be retrieved again.',
-      },
     };
   }
 
@@ -1057,6 +892,7 @@ export class CardsService {
       ledgerTransactionId: ledgerTx.id,
     };
     this.cardTransactions.push(approvedRecord);
+    this.schedulePersist();
 
     // 8. Add member notification
     this.kycService.addNotification({

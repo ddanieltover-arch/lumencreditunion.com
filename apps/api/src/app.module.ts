@@ -38,7 +38,6 @@ import {
   UpdateCardLimitsSchema,
   SimulateCardPurchaseSchema,
   AdminUpdateCardSchema,
-  AdminCreateCardSchema,
   AdminCreditCardWalletSchema,
   UpdateCardStatusSchema,
   formatMoney,
@@ -910,19 +909,12 @@ export function createApiApp(
         }
 
         const verifiedMembers = directory.filter((m) => m.identityVerified).length;
-        await cardsService.ensureReady();
-        const allAdminCards = cardsService.getAllCardsForAdmin();
-        const activeCardsCount = allAdminCards.filter((c) => c.status === 'ACTIVE').length;
-        const frozenCardsCount = allAdminCards.filter((c) => c.status === 'FROZEN').length;
 
         res.json({
           totalMembers: directory.length,
           verifiedMembers,
           pendingKycCount: kycQueue.length,
           pendingLoansCount: pendingLoans.length,
-          totalCardsCount: allAdminCards.length,
-          activeCardsCount,
-          frozenCardsCount,
           totalTestFunds: fundsByCurrency,
           totalFundsUsd: fundsByCurrency.USD.totalMinor / 100,
           flaggedTransfersCount: flagged.length,
@@ -932,7 +924,6 @@ export function createApiApp(
           loans,
           kycSubmissions: allKyc,
           ledgerTransactions,
-          cards: allAdminCards,
         });
       } catch (err) {
         next(err);
@@ -1585,23 +1576,6 @@ export function createApiApp(
     },
   );
 
-  app.post(
-    '/admin/cards',
-    authenticateJwt,
-    requireRole(['SUPER_ADMIN']),
-    validateZod(AdminCreateCardSchema),
-    async (req: Request, res: Response, next) => {
-      try {
-        await cardsService.ensureReady();
-        const ip = (req.ip || '127.0.0.1').toString();
-        const result = await cardsService.adminCreateCard(req.body, req.user!.id, ip);
-        res.status(201).json(result);
-      } catch (err) {
-        next(err);
-      }
-    },
-  );
-
   app.patch(
     '/admin/cards/:id',
     authenticateJwt,
@@ -1679,21 +1653,6 @@ export function createApiApp(
           ip,
         );
         res.status(201).json(result);
-      } catch (err) {
-        next(err);
-      }
-    },
-  );
-
-  app.get(
-    '/admin/cards/:id/transactions',
-    authenticateJwt,
-    requireRole(['SUPER_ADMIN']),
-    async (req: Request, res: Response, next) => {
-      try {
-        await cardsService.ensureReady();
-        const transactions = cardsService.adminGetCardTransactions(req.params.id);
-        res.json({ transactions, total: transactions.length });
       } catch (err) {
         next(err);
       }

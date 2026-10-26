@@ -69,6 +69,13 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
 
   const walletBalance = activeMember?.wallets[selectedCurrency] || 0;
 
+  const cardStatusLabel = (status: string) => {
+    if (status === 'FROZEN') return 'Frozen';
+    if (status === 'SUSPENDED') return 'Suspended';
+    if (status === 'TERMINATED') return 'Terminated';
+    return 'Active';
+  };
+
   const displayPan =
     credentialsVisible && activeSecrets ? activeSecrets.fullPan : activeCard?.maskedPan || '';
   const displayCvv =
@@ -278,7 +285,7 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                     : 'bg-white text-[#0E1B1F] border-[#DCE5E3] hover:bg-[#F4F7F6]'
                 }`}
               >
-                {card.maskedPan.slice(-9)} · {card.status === 'FROZEN' ? 'Frozen' : 'Active'}
+                {card.maskedPan.slice(-9)} · {cardStatusLabel(card.status)}
               </button>
             );
           })}
@@ -301,10 +308,14 @@ export const VirtualCardsView: React.FC<VirtualCardsViewProps> = ({ compact = fa
                   className={`text-xs font-semibold px-3 py-1 rounded-full ${
                     activeCard.status === 'FROZEN'
                       ? 'bg-[#FFF1CC] text-[#5A4100]'
-                      : 'bg-[#E3F3F1] text-[#0A4F4A]'
+                      : activeCard.status === 'SUSPENDED'
+                        ? 'bg-orange-50 text-orange-800'
+                        : activeCard.status === 'TERMINATED'
+                          ? 'bg-red-50 text-red-700'
+                          : 'bg-[#E3F3F1] text-[#0A4F4A]'
                   }`}
                 >
-                  {activeCard.status === 'FROZEN' ? 'Frozen' : 'Active'}
+                  {cardStatusLabel(activeCard.status)}
                 </span>
               </div>
 

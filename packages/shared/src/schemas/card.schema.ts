@@ -52,8 +52,6 @@ export const AdminUpdateCardSchema = z
     monthlyLimitMinor: z.number().int().positive().optional(),
     status: CardStatusSchema.optional(),
     reason: z.string().max(255).optional(),
-    resetSpentToday: z.boolean().optional(),
-    resetSpentThisMonth: z.boolean().optional(),
   })
   .refine(
     (data) =>
@@ -66,15 +64,6 @@ export const AdminUpdateCardSchema = z
     },
   );
 export type AdminUpdateCardInput = z.infer<typeof AdminUpdateCardSchema>;
-
-export const AdminCreateCardSchema = z.object({
-  memberId: z.string().min(1, 'Member ID is required'),
-  currency: CardCurrencySchema,
-  cardholderName: z.string().min(2).max(100).optional(),
-  dailyLimitMinor: z.number().int().positive().optional(),
-  monthlyLimitMinor: z.number().int().positive().optional(),
-});
-export type AdminCreateCardInput = z.infer<typeof AdminCreateCardSchema>;
 
 export const AdminCreditCardWalletSchema = z.object({
   amountMinor: z.number().int().positive('Credit amount must be a positive integer in minor units'),

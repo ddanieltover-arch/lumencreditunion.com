@@ -55,8 +55,8 @@ const ADMIN_NAV_ITEMS: Array<{
   { id: 'members', label: 'Members', icon: Users },
   { id: 'identity_reviews', label: 'Identity reviews', shortLabel: 'KYC', icon: FileCheck },
   { id: 'fund_wallet', label: 'Fund wallets', shortLabel: 'Fund', icon: Coins, accent: 'text-[#F5B942]' },
-  { id: 'virtual_cards', label: 'Virtual cards', shortLabel: 'Cards', icon: CreditCard },
   { id: 'loan_applications', label: 'Loan applications', shortLabel: 'Loans', icon: Landmark },
+  { id: 'virtual_cards', label: 'Virtual cards', shortLabel: 'Cards', icon: CreditCard },
   { id: 'ledger', label: 'Ledger', icon: BookOpen },
   { id: 'audit_log', label: 'Audit log', icon: History },
   { id: 'country_settings', label: 'Country settings', icon: Globe },
@@ -693,8 +693,8 @@ export const AdminPortal: React.FC = () => {
               {adminTab === 'fund_wallet' && 'Fund a wallet'}
               {adminTab === 'members' && 'Registered Members'}
               {adminTab === 'identity_reviews' && 'KYC Identity Review Queue'}
-              {adminTab === 'virtual_cards' && 'Member Virtual Cards'}
               {adminTab === 'loan_applications' && 'Credit & Underwriting Queue'}
+              {adminTab === 'virtual_cards' && 'Virtual Card Management'}
               {adminTab === 'ledger' && 'Immutable Double-Entry Ledger'}
               {adminTab === 'audit_log' && 'Compliance Audit Log'}
               {adminTab === 'country_settings' && 'Jurisdiction & Partner Rules'}
@@ -704,8 +704,9 @@ export const AdminPortal: React.FC = () => {
                 'Every credit is posted to the ledger with a reference and recorded in the audit log.'}
               {adminTab === 'members' && 'View member accounts, verified documents, and balances.'}
               {adminTab === 'identity_reviews' && 'Review uploaded passport and national ID scans.'}
-              {adminTab === 'virtual_cards' && 'Freeze, unfreeze, suspend, edit limits, credit, or delete member cards.'}
               {adminTab === 'loan_applications' && 'Underwrite auto and mortgage loans with fund disbursement.'}
+              {adminTab === 'virtual_cards' &&
+                'Freeze, suspend, edit, credit wallets, or delete member virtual cards.'}
               {adminTab === 'ledger' && 'Balanced debits and credits across funding pools and member wallets.'}
               {adminTab === 'audit_log' && 'Full chronological record of administrative actions and timestamps.'}
               {adminTab === 'country_settings' && 'Configure currency support and document requirements per country.'}
@@ -716,7 +717,7 @@ export const AdminPortal: React.FC = () => {
               OBSERVABILITY: ADMIN DASHBOARD OF KEY COUNTS
               (Members, Pending KYC, Pending Loans, Total Funds)
              ══════════════════════════════════════════════════════ */}
-          <section aria-label="Key Platform Observability Metrics" className="grid grid-cols-2 lg:grid-cols-5 gap-3.5 sm:gap-4">
+          <section aria-label="Key Platform Observability Metrics" className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
             {/* 1. Members Count */}
             <div
               onClick={() => setAdminTab('members')}
@@ -742,34 +743,7 @@ export const AdminPortal: React.FC = () => {
               </div>
             </div>
 
-            {/* 2. Virtual Cards Count */}
-            <div
-              onClick={() => setAdminTab('virtual_cards')}
-              className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DCE5E3] hover:border-[#0A3D3F] transition-all cursor-pointer shadow-xs flex flex-col justify-between gap-2"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-[#4A5B60] uppercase tracking-wider">Virtual Cards</span>
-                <div className="w-8 h-8 rounded-lg bg-[#E3F3F1] flex items-center justify-center text-[#0A3D3F]">
-                  <CreditCard className="w-4 h-4" />
-                </div>
-              </div>
-              <div>
-                <div className="text-2xl sm:text-3xl font-display font-bold text-[#0E1B1F]">
-                  {typeof (adminDashboardStats as any)?.totalCardsCount === 'number'
-                    ? (adminDashboardStats as any).totalCardsCount
-                    : '—'}
-                </div>
-                <div className="text-[11px] text-[#0F766E] font-medium flex items-center gap-1 mt-0.5">
-                  <CheckCircle2 className="w-3 h-3" />
-                  <span>
-                    {(adminDashboardStats as any)?.activeCardsCount ?? 0} active card
-                    {((adminDashboardStats as any)?.activeCardsCount ?? 0) === 1 ? '' : 's'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* 3. Pending KYC Count */}
+            {/* 2. Pending KYC Count */}
             <div
               onClick={() => setAdminTab('identity_reviews')}
               className="bg-white p-4 sm:p-5 rounded-2xl border border-[#DCE5E3] hover:border-[#0A3D3F] transition-all cursor-pointer shadow-xs flex flex-col justify-between gap-2"
@@ -1361,18 +1335,6 @@ export const AdminPortal: React.FC = () => {
                               type="button"
                               onClick={() => {
                                 setSelectedMemberId(m.id);
-                                setAdminTab('virtual_cards');
-                              }}
-                              className="px-2.5 py-1.5 rounded-lg border border-[#DCE5E3] text-[#0A3D3F] text-xs font-semibold hover:bg-[#E3F3F1] inline-flex items-center gap-1"
-                              title="Manage this member's virtual cards"
-                            >
-                              <CreditCard className="w-3.5 h-3.5 text-[#0F766E]" />
-                              Cards
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedMemberId(m.id);
                                 setAdminTab('fund_wallet');
                               }}
                               className="px-3 py-1.5 rounded-lg bg-[#F5B942] text-[#0A3D3F] text-xs font-bold hover:bg-[#E0A82E] shadow-sm inline-flex items-center gap-1"
@@ -1762,6 +1724,11 @@ export const AdminPortal: React.FC = () => {
           )}
 
           {/* ══════════════════════════════════════════════════════
+              VIEW: VIRTUAL CARD MANAGEMENT
+             ══════════════════════════════════════════════════════ */}
+          {adminTab === 'virtual_cards' && <AdminVirtualCardsPanel />}
+
+          {/* ══════════════════════════════════════════════════════
               VIEW: LOAN UNDERWRITING APPLICATIONS
              ══════════════════════════════════════════════════════ */}
           {adminTab === 'loan_applications' && (
@@ -2043,10 +2010,6 @@ export const AdminPortal: React.FC = () => {
                 ))}
               </div>
             </div>
-          )}
-
-          {adminTab === 'virtual_cards' && (
-            <AdminVirtualCardsPanel initialMemberId={selectedMemberId} />
           )}
           </PanelSwap>
         </main>
