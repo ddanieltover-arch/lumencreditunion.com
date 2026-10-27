@@ -160,7 +160,7 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 3: SUPER ADMIN REVIEWS & APPROVES KYC
     // ─────────────────────────────────────────────────────────────────────────
-    // Admin login: password → email OTP → mandatory authenticator MFA
+    // Admin login: password → authenticator MFA only (no email OTP)
     const adminLoginRes = await fetch(`${baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -171,30 +171,18 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
     });
     expect(adminLoginRes.status).toBe(200);
     const adminLoginBody = await adminLoginRes.json();
-    expect(adminLoginBody.requiresEmailOtp).toBe(true);
-    expect(adminLoginBody.sandboxOtpHint).toBeDefined();
+    expect(adminLoginBody.requiresEmailOtp).toBeUndefined();
+    expect(adminLoginBody.requiresMfa).toBe(true);
+    expect(adminLoginBody.mfaTicket).toBeDefined();
 
-    const adminEmailOtpRes = await fetch(`${baseUrl}/auth/email-otp-verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        otpTicket: adminLoginBody.otpTicket,
-        code: adminLoginBody.sandboxOtpHint,
-      }),
-    });
-    expect(adminEmailOtpRes.status).toBe(200);
-    const adminEmailOtpBody = await adminEmailOtpRes.json();
-    expect(adminEmailOtpBody.requiresMfa).toBe(true);
-    expect(adminEmailOtpBody.mfaTicket).toBeDefined();
-
-    const adminTotp = adminEmailOtpBody.sandboxMfaHint?.totpCode;
+    const adminTotp = adminLoginBody.sandboxMfaHint?.totpCode;
     expect(adminTotp).toBeDefined();
 
     const adminMfaRes = await fetch(`${baseUrl}/auth/mfa-verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mfaTicket: adminEmailOtpBody.mfaTicket,
+        mfaTicket: adminLoginBody.mfaTicket,
         totpCode: adminTotp,
       }),
     });

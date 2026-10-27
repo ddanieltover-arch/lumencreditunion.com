@@ -1159,11 +1159,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res.ok) {
       throw new Error(data.message || 'Login failed.');
     }
-    // Password OK → email OTP required (never a full session yet)
-    if (data.requiresEmailOtp) {
+    // Members: email OTP next. Admins: authenticator MFA (or session).
+    if (data.requiresEmailOtp || data.requiresMfa) {
       return data;
     }
-    // Legacy / unexpected full login payload
     if (data.accessToken && data.user) {
       await applyAuthenticatedSession(data);
     }

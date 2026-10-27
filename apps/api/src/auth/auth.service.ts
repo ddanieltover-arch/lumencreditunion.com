@@ -670,20 +670,38 @@ export class AuthService {
 
   /**
    * Login with Argon2 verification and lockout after 5 attempts.
-   * Always requires email OTP next; authenticator MFA (if enrolled) is a third step.
+   * Members: email OTP next, then authenticator MFA if enrolled.
+   * SUPER_ADMIN: skip email OTP; go straight to authenticator MFA (mandatory) or session.
    */
   async login(
     input: LoginUserInput,
     ipAddress: string,
     userAgent = 'Unknown Client',
-  ): Promise<{
-    requiresEmailOtp: true;
-    otpTicket: string;
-    maskedEmail: string;
-    expiresInSeconds: number;
-    emailSent: boolean;
-    sandboxOtpHint?: string;
-  }> {
+  ): Promise<
+    | {
+        requiresEmailOtp: true;
+        otpTicket: string;
+        maskedEmail: string;
+        expiresInSeconds: number;
+        emailSent: boolean;
+        sandboxOtpHint?: string;
+      }
+    | {
+        requiresMfa: true;
+        mfaTicket: string;
+        sandboxMfaHint?: {
+          totpCode?: string;
+          recoveryCodes?: string[];
+        };
+      }
+    | {
+        requiresMfa: false;
+        accessToken: string;
+        refreshToken: string;
+        user: Omit<UserRecord, 'passwordHash' | 'mfaSecret' | 'mfaRecoveryCodes'>;
+        session: { id: string; createdAt: string; deviceInfo: string };
+      }
+  > {
     await this.ensureReady();
     const validated = LoginUserSchema.parse(input);
     const emailLower = validated.email.toLowerCase();
@@ -777,7 +795,33 @@ export class AuthService {
     }
     this.saveUser(user);
 
-    // 3. Always require email OTP (never issue tokens here)
+    // SUPER_ADMIN skips email OTP — authenticator MFA only
+    if (user.role === 'SUPER_ADMIN') {
+      if (user.mfaEnabled) {
+        const mfaTicket = crypto.randomBytes(24).toString('hex');
+        this.mfaTickets.set(mfaTicket, {
+          userId: user.id,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+        });
+        const exposeMfaHint =
+          this.configService.isSandbox || process.env.NODE_ENV === 'test';
+        return {
+          requiresMfa: true,
+          mfaTicket,
+          sandboxMfaHint: exposeMfaHint
+            ? {
+                totpCode: user.mfaSecret
+                  ? generateTotpCode(user.mfaSecret)
+                  : undefined,
+                recoveryCodes: [...user.mfaRecoveryCodes],
+              }
+            : undefined,
+        };
+      }
+      return this.createSessionAndIssueTokens(user, ipAddress, userAgent);
+    }
+
+    // Members: always require email OTP (never issue tokens here)
     return this.issueLoginEmailOtp(user);
   }
 
