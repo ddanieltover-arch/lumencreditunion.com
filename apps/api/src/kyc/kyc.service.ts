@@ -45,6 +45,9 @@ export class KycService {
   private notifications = new Map<string, MemberNotification[]>(); // memberId -> notifications[]
   public memberKycStatus = new Map<string, KycSubmissionStatus>(); // memberId -> status override or cache
   private hydratePromise: Promise<void>;
+  private lastStoreRefreshAt = 0;
+  private storeRefreshInFlight: Promise<void> | null = null;
+  private static readonly STORE_REFRESH_TTL_MS = 2_000;
 
   constructor(
     private readonly storageService: PrivateDocumentStorageService = new PrivateDocumentStorageService(),
@@ -71,6 +74,8 @@ export class KycService {
 
   async ensureReady(): Promise<void> {
     await this.hydratePromise;
+    // Re-read Neon so other Vercel instances see approvals immediately
+    await this.refreshFromStore();
   }
 
   private indexSubmission(submission: KycSubmission) {
@@ -90,12 +95,65 @@ export class KycService {
         // Prefer durable store over demo seed for the same member
         this.indexSubmission(submission);
       }
+      this.lastStoreRefreshAt = Date.now();
       if (persisted.length) {
         console.log(`[KycService] Restored ${persisted.length} KYC submission(s) from database.`);
       }
     } catch (err) {
       console.error('[KycService] Hydration failed:', err);
     }
+  }
+
+  /** Pull latest KYC rows from Neon (deduped within TTL for hot paths). */
+  async refreshFromStore(force = false): Promise<void> {
+    if (
+      !force &&
+      Date.now() - this.lastStoreRefreshAt < KycService.STORE_REFRESH_TTL_MS
+    ) {
+      return;
+    }
+    if (this.storeRefreshInFlight) {
+      await this.storeRefreshInFlight;
+      return;
+    }
+    this.storeRefreshInFlight = (async () => {
+      try {
+        const persisted = await loadPersistedKycSubmissions();
+        for (const submission of persisted) {
+          this.indexSubmission(submission);
+        }
+        this.lastStoreRefreshAt = Date.now();
+      } catch (err) {
+        console.error('[KycService] refreshFromStore failed:', err);
+      } finally {
+        this.storeRefreshInFlight = null;
+      }
+    })();
+    await this.storeRefreshInFlight;
+  }
+
+  /**
+   * When auth user id and KYC memberId diverge (same email), point KYC at the live auth id
+   * so directory, funding guards, and member dashboard all see the same approval.
+   */
+  async rebindSubmissionToMember(
+    submissionId: string,
+    newMemberId: string,
+  ): Promise<KycSubmission | null> {
+    const submission = this.submissions.get(submissionId);
+    if (!submission) return null;
+    if (submission.memberId === newMemberId) return submission;
+
+    const previousMemberId = submission.memberId;
+    this.memberSubmissionIndex.delete(previousMemberId);
+    this.memberKycStatus.delete(previousMemberId);
+    await deletePersistedKycSubmission(previousMemberId);
+
+    submission.memberId = newMemberId;
+    submission.updatedAt = new Date().toISOString();
+    this.indexSubmission(submission);
+    await persistKycSubmission(submission);
+    return submission;
   }
 
   private resolveSubmissionId(memberId: string, memberEmail?: string): string | undefined {
@@ -420,6 +478,7 @@ export class KycService {
     ipAddress: string,
     userAgent?: string,
   ): Promise<KycSubmission> {
+    await this.ensureReady();
     const validated = ReviewKycInputSchema.parse(input);
     const submission = this.submissions.get(submissionId);
     if (!submission) {

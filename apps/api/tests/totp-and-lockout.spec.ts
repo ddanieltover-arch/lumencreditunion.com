@@ -88,7 +88,9 @@ describe('Auth Security: Lockout, TOTP MFA, and Registration Rules', () => {
       { email: 'mfa.user@lumenfield.internal', password: 'Password123!@#' },
       '127.0.0.1',
     );
-    expect(loginOtp.requiresEmailOtp).toBe(true);
+    if (!('requiresEmailOtp' in loginOtp) || !loginOtp.requiresEmailOtp) {
+      throw new Error('Expected email OTP for member login');
+    }
     expect(loginOtp.sandboxOtpHint).toBeDefined();
 
     const afterEmailOtp = await authService.verifyLoginEmailOtp(

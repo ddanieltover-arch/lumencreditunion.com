@@ -2562,9 +2562,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     await fetchAdminKycQueue();
-    await fetchAdminMembers(token);
+    // Refresh directory + dashboard stats so verified counts / funding gates match KYC
+    await fetchAdminDashboardStats(token);
 
-    // Update target member in members list
+    // Update target member in members list (belt-and-suspenders after stats sync)
     setMembers((prev) =>
       prev.map((m) => {
         if (

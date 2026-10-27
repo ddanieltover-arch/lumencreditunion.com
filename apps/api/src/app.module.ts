@@ -682,12 +682,16 @@ export function createApiApp(
 
     // Keep auth registry aligned with durable KYC member rows
     for (const sub of kycService.getAdminQueue()) {
-      authService.ensureMemberFromProfile({
+      const user = authService.ensureMemberFromProfile({
         id: sub.memberId,
         email: sub.memberEmail,
         fullName: sub.memberName || sub.memberEmail,
         countryCode: sub.countryCode,
       });
+      // Same email, different ids → rebind KYC onto the live auth member
+      if (user.id !== sub.memberId) {
+        await kycService.rebindSubmissionToMember(sub.id, user.id);
+      }
     }
 
     return authService

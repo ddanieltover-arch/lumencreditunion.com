@@ -31,7 +31,9 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
       },
       '127.0.0.1',
     );
-    expect(loginRes.requiresEmailOtp).toBe(true);
+    if (!('requiresEmailOtp' in loginRes) || !loginRes.requiresEmailOtp) {
+      throw new Error('Expected email OTP for member login');
+    }
     expect(loginRes.sandboxOtpHint).toBeDefined();
     const otpLogin = await authService.verifyLoginEmailOtp(
       loginRes.otpTicket,
@@ -81,7 +83,9 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
       },
       '127.0.0.1',
     );
-    expect(loginRes.requiresEmailOtp).toBe(true);
+    if (!('requiresEmailOtp' in loginRes) || !loginRes.requiresEmailOtp) {
+      throw new Error('Expected email OTP for member login');
+    }
     const otpLogin = await authService.verifyLoginEmailOtp(
       loginRes.otpTicket,
       loginRes.sandboxOtpHint!,
