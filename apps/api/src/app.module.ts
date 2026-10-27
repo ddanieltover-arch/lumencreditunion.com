@@ -174,48 +174,56 @@ export function createApiApp(
   const emailService = EmailService.getInstance();
 
   /** Re-apply approved funding requests when the in-memory ledger was wiped (cold start). */
-  let fundingReplayPromise: Promise<void> | undefined;
+  let lastFundingReplayAt = 0;
+  let fundingReplayInFlight: Promise<void> | undefined;
+  const FUNDING_REPLAY_TTL_MS = 2_000;
   const replayApprovedFundingIntoLedger = async () => {
-    if (!fundingReplayPromise) {
-      fundingReplayPromise = (async () => {
-        await ledgerService.ensureReady();
-        const fundingRequests = await ensureFundingStoreReady();
-        let replayed = 0;
-        for (const record of fundingRequests.values()) {
-          if (record.status !== 'APPROVED' || !record.amountMinor || !record.memberId) continue;
-          try {
-            await ledgerService.adminFundMemberWallet(
-              {
-                memberId: record.memberId,
-                amountMinor: record.amountMinor,
-                currency: record.currency,
-                reason: `Member funding request: ${record.reason}`,
-                reference: `FR-${record.id.slice(0, 12).toUpperCase()}`,
-                source: 'DEPOSIT',
-                idempotencyKey: `fund-req-${record.id}`,
-              },
-              record.reviewedById || 'system-replay',
-              '127.0.0.1',
-            );
-            replayed += 1;
-          } catch (err) {
-            console.warn(
-              `[Ledger] Could not replay approved funding ${record.id}:`,
-              (err as Error)?.message || err,
-            );
-          }
-        }
-        if (replayed > 0) {
-          console.log(
-            `[Ledger] Reconciled ${replayed} approved funding request(s) into the ledger.`,
+    await ledgerService.ensureReady();
+    if (Date.now() - lastFundingReplayAt < FUNDING_REPLAY_TTL_MS) {
+      if (fundingReplayInFlight) await fundingReplayInFlight;
+      return;
+    }
+    if (fundingReplayInFlight) {
+      await fundingReplayInFlight;
+      return;
+    }
+    fundingReplayInFlight = (async () => {
+      const fundingRequests = await ensureFundingStoreReady();
+      let replayed = 0;
+      for (const record of fundingRequests.values()) {
+        if (record.status !== 'APPROVED' || !record.amountMinor || !record.memberId) continue;
+        try {
+          await ledgerService.adminFundMemberWallet(
+            {
+              memberId: record.memberId,
+              amountMinor: record.amountMinor,
+              currency: record.currency,
+              reason: `Member funding request: ${record.reason}`,
+              reference: `FR-${record.id.slice(0, 12).toUpperCase()}`,
+              source: 'DEPOSIT',
+              idempotencyKey: `fund-req-${record.id}`,
+            },
+            record.reviewedById || 'system-replay',
+            '127.0.0.1',
+          );
+          replayed += 1;
+        } catch (err) {
+          console.warn(
+            `[Ledger] Could not replay approved funding ${record.id}:`,
+            (err as Error)?.message || err,
           );
         }
-      })().catch((err) => {
-        fundingReplayPromise = undefined;
-        throw err;
-      });
-    }
-    await fundingReplayPromise;
+      }
+      if (replayed > 0) {
+        console.log(
+          `[Ledger] Reconciled ${replayed} approved funding request(s) into the ledger.`,
+        );
+      }
+      lastFundingReplayAt = Date.now();
+    })().finally(() => {
+      fundingReplayInFlight = undefined;
+    });
+    await fundingReplayInFlight;
   };
 
   // Process-wide durable stores (hydrated from Postgres)
@@ -1300,6 +1308,7 @@ export function createApiApp(
   // Tasks: balances, transaction history with pagination and filters, downloadable statement (CSV and PDF)
   // ---------------------------------------------------------------------------
   app.get('/wallet/balances', authenticateJwt, async (req: Request, res: Response) => {
+    await Promise.all([ledgerService.ensureReady(), authService.ensureReady()]);
     await replayApprovedFundingIntoLedger();
     res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
     const balances = ledgerService.getMemberBalances(req.user!.id);
@@ -1307,6 +1316,7 @@ export function createApiApp(
   });
 
   app.get('/wallet/transactions', authenticateJwt, async (req: Request, res: Response) => {
+    await Promise.all([ledgerService.ensureReady(), authService.ensureReady()]);
     await replayApprovedFundingIntoLedger();
     res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
     const history = ledgerService.getMemberTransactions(req.user!.id, req.query as any);
@@ -1314,6 +1324,8 @@ export function createApiApp(
   });
 
   app.get('/wallet/statement', authenticateJwt, async (req: Request, res: Response) => {
+    await Promise.all([ledgerService.ensureReady(), authService.ensureReady()]);
+    await replayApprovedFundingIntoLedger();
     const format = ((req.query.format as string) || 'csv').toLowerCase();
     const currency = req.query.currency as string | undefined;
     const user = authService.getUserById(req.user!.id);

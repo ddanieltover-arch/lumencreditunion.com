@@ -83,6 +83,9 @@ export class LedgerService {
   private transactions: LedgerTransactionRecord[] = [];
   private idempotencyStore = new Map<string, LedgerTransactionRecord>();
   private hydratePromise: Promise<void> | null = null;
+  private lastStoreRefreshAt = 0;
+  private storeRefreshInFlight: Promise<void> | null = null;
+  private static readonly STORE_REFRESH_TTL_MS = 2_000;
 
   constructor(
     private readonly configService: ConfigService = ConfigService.getInstance(),
@@ -121,6 +124,34 @@ export class LedgerService {
       });
     }
     await this.hydratePromise;
+    // Re-read Neon so other Vercel isolates see admin funding immediately
+    await this.refreshFromStore();
+  }
+
+  private applySnapshot(snapshot: {
+    accounts?: AccountRecord[];
+    memberWallets?: Array<[string, string]>;
+    transactions?: LedgerTransactionRecord[];
+  }): void {
+    for (const acc of snapshot.accounts || []) {
+      if (!acc?.id) continue;
+      this.accounts.set(acc.id, acc);
+    }
+    for (const [key, accountId] of snapshot.memberWallets || []) {
+      if (key && accountId) this.memberWallets.set(key, accountId);
+    }
+    const snapshotTxCount = Array.isArray(snapshot.transactions)
+      ? snapshot.transactions.length
+      : 0;
+    if (snapshotTxCount) {
+      this.transactions = snapshot.transactions!.slice();
+      this.idempotencyStore.clear();
+      for (const tx of this.transactions) {
+        if (tx?.idempotencyKey) {
+          this.idempotencyStore.set(tx.idempotencyKey, tx);
+        }
+      }
+    }
   }
 
   private async hydrateFromStore(): Promise<void> {
@@ -132,25 +163,53 @@ export class LedgerService {
     const shouldLoad = this.transactions.length === 0 || snapshotTxCount > this.transactions.length;
     if (!shouldLoad) return;
 
-    for (const acc of snapshot.accounts || []) {
-      if (!acc?.id) continue;
-      this.accounts.set(acc.id, acc);
-    }
-    for (const [key, accountId] of snapshot.memberWallets || []) {
-      if (key && accountId) this.memberWallets.set(key, accountId);
-    }
-    if (snapshotTxCount) {
-      this.transactions = snapshot.transactions.slice();
-      this.idempotencyStore.clear();
-      for (const tx of this.transactions) {
-        if (tx?.idempotencyKey) {
-          this.idempotencyStore.set(tx.idempotencyKey, tx);
-        }
-      }
-    }
+    this.applySnapshot(snapshot);
+    this.lastStoreRefreshAt = Date.now();
     console.log(
       `[Ledger] Restored ${this.transactions.length} transaction(s) and ${this.accounts.size} account(s) from database.`,
     );
+  }
+
+  /** Pull latest ledger snapshot from Neon when the durable book is richer. */
+  async refreshFromStore(force = false): Promise<void> {
+    if (
+      !force &&
+      Date.now() - this.lastStoreRefreshAt < LedgerService.STORE_REFRESH_TTL_MS
+    ) {
+      return;
+    }
+    if (this.storeRefreshInFlight) {
+      await this.storeRefreshInFlight;
+      return;
+    }
+    this.storeRefreshInFlight = (async () => {
+      try {
+        const snapshot = await loadPersistedLedgerSnapshot();
+        if (!snapshot) {
+          this.lastStoreRefreshAt = Date.now();
+          return;
+        }
+        const snapshotTxCount = Array.isArray(snapshot.transactions)
+          ? snapshot.transactions.length
+          : 0;
+        const shouldLoad =
+          force ||
+          snapshotTxCount > this.transactions.length ||
+          (this.transactions.length === 0 && (snapshot.accounts?.length ?? 0) > 0);
+        if (shouldLoad) {
+          this.applySnapshot(snapshot);
+          console.log(
+            `[Ledger] Refreshed ${this.transactions.length} transaction(s) and ${this.accounts.size} account(s) from database.`,
+          );
+        }
+        this.lastStoreRefreshAt = Date.now();
+      } catch (err) {
+        console.error('[Ledger] refreshFromStore failed:', err);
+      } finally {
+        this.storeRefreshInFlight = null;
+      }
+    })();
+    await this.storeRefreshInFlight;
   }
 
   private schedulePersist(): void {
@@ -492,10 +551,18 @@ export class LedgerService {
     adminId: string,
     ipAddress: string,
   ): Promise<LedgerTransactionRecord> {
+    await this.ensureReady();
+    if (this.kycService) {
+      await this.kycService.ensureReady();
+    }
     const validated = AdminFundWalletSchema.parse(input);
+    const memberForKyc = this.authService?.getUserById(validated.memberId);
 
-    // 1. HARD RULE: Reject funding unverified members
-    if (this.kycService && !this.kycService.isMemberKycApproved(validated.memberId)) {
+    // 1. HARD RULE: Reject funding unverified members (match by id or email)
+    if (
+      this.kycService &&
+      !this.kycService.isMemberKycApproved(validated.memberId, memberForKyc?.email)
+    ) {
       const err: any = new Error(
         `Cannot fund unverified member ${validated.memberId}. Member identity verification (KYC) must be APPROVED.`,
       );
@@ -822,9 +889,49 @@ export class LedgerService {
   }
 
   /**
+   * If funding landed on a duplicate auth id for the same email, point those
+   * wallets at the live login member id so balances/history show up.
+   */
+  reconcileMemberWalletOwnership(memberId: string): void {
+    const user = this.authService?.getUserById(memberId);
+    if (!user?.email || !this.authService) return;
+
+    const email = user.email.toLowerCase();
+    const altIds = this.authService
+      .getAllUsers()
+      .filter((u) => u.email.toLowerCase() === email && u.id !== memberId)
+      .map((u) => u.id);
+
+    for (const altId of altIds) {
+      for (const acc of this.accounts.values()) {
+        if (acc.accountType === 'MEMBER_WALLET' && acc.memberId === altId) {
+          acc.memberId = memberId;
+          acc.updatedAt = new Date().toISOString();
+          this.memberWallets.set(`${memberId}:${acc.currency}`, acc.id);
+          this.memberWallets.delete(`${altId}:${acc.currency}`);
+        }
+      }
+      const currencies: SupportedCurrency[] = ['USD', 'CAD', 'GBP', 'EUR'];
+      for (const cur of currencies) {
+        const key = `${altId}:${cur}`;
+        const accountId = this.memberWallets.get(key);
+        if (!accountId) continue;
+        this.memberWallets.set(`${memberId}:${cur}`, accountId);
+        this.memberWallets.delete(key);
+        const acc = this.accounts.get(accountId);
+        if (acc) {
+          acc.memberId = memberId;
+          acc.updatedAt = new Date().toISOString();
+        }
+      }
+    }
+  }
+
+  /**
    * Wallet Balances for Member across enabled currencies (USD, CAD, GBP, EUR)
    */
   getMemberBalances(memberId: string): WalletBalanceSummary[] {
+    this.reconcileMemberWalletOwnership(memberId);
     const currencies: SupportedCurrency[] = ['USD', 'CAD', 'GBP', 'EUR'];
     const summaries: WalletBalanceSummary[] = [];
 
@@ -888,11 +995,19 @@ export class LedgerService {
     const validated = WalletTransactionQuerySchema.parse(query);
     const symbols: Record<string, string> = { USD: '$', CAD: 'CA$', GBP: '£', EUR: '€' };
 
-    // Find all accounts owned by this member
+    this.reconcileMemberWalletOwnership(memberId);
+
+    // Find all accounts owned by this member (by memberId field and wallet index)
     const memberAccountIds = new Set<string>();
     for (const acc of this.accounts.values()) {
       if (acc.memberId === memberId || acc.id === memberId) {
         memberAccountIds.add(acc.id);
+      }
+    }
+    const walletKeyPrefix = `${memberId}:`;
+    for (const [key, accountId] of this.memberWallets.entries()) {
+      if (key.startsWith(walletKeyPrefix) && accountId) {
+        memberAccountIds.add(accountId);
       }
     }
 

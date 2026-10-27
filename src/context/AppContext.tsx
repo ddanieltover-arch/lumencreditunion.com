@@ -691,6 +691,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     try {
       const token = tokenOverride ?? authToken;
       if (!token) return;
+      if (currentUser?.id && currentUser.role !== 'SUPER_ADMIN') {
+        setActiveMemberId(currentUser.id);
+      }
       const headers: Record<string, string> = {
         Authorization: `Bearer ${token}`,
         'Cache-Control': 'no-cache',
@@ -742,16 +745,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           setMembers((prev) => {
             const matchIdx = prev.findIndex(
               (m) =>
-                m.id === activeMemberId ||
                 (currentUser &&
                   (m.id === currentUser.id ||
-                    m.email.toLowerCase() === currentUser.email.toLowerCase())),
+                    m.email.toLowerCase() === currentUser.email.toLowerCase())) ||
+                m.id === activeMemberId,
             );
             if (matchIdx >= 0) {
               const next = [...prev];
               const current = next[matchIdx]!;
               next[matchIdx] = {
                 ...current,
+                id: currentUser?.id && currentUser.role !== 'SUPER_ADMIN' ? currentUser.id : current.id,
                 wallets: {
                   ...current.wallets,
                   ...walletPatch,
@@ -774,10 +778,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
             }
             return prev;
           });
-
-          if (currentUser?.id && !activeMemberId) {
-            setActiveMemberId(currentUser.id);
-          }
         }
       }
     } catch (err) {

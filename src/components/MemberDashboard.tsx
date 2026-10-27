@@ -146,6 +146,14 @@ export const MemberDashboard: React.FC = () => {
     }
   }, [currentUser?.id, authToken]);
 
+  // Refresh balances/history when returning to overview or wallet
+  useEffect(() => {
+    if (!currentUser || currentUser.role === 'SUPER_ADMIN') return;
+    if (memberTab === 'overview' || memberTab === 'wallet') {
+      void fetchMemberWalletActivity();
+    }
+  }, [memberTab, currentUser?.id]);
+
   // Keep transfer/swap defaults aligned with the member's signup-country currency
   useEffect(() => {
     if (!activeMember) return;
