@@ -39,8 +39,34 @@ import {
   persistSession,
   deletePersistedSession,
 } from './auth-persistence';
+import {
+  type LoginOtpChallenge,
+  loadPersistedLoginOtp,
+  persistLoginOtp,
+  deletePersistedLoginOtp,
+} from './login-otp-persistence';
 import { loadPersistedKycSubmissions } from '../kyc/kyc-persistence';
 import type { AdminUpdateMemberInput } from '@lumenfield/shared';
+
+const LOGIN_OTP_TTL_MS = 10 * 60 * 1000;
+const LOGIN_OTP_MAX_ATTEMPTS = 5;
+const LOGIN_OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const LOGIN_OTP_EXPIRES_SECONDS = 600;
+
+function hashLoginOtp(code: string): string {
+  return crypto.createHash('sha256').update(code.trim()).digest('hex');
+}
+
+function generateLoginOtpCode(): string {
+  return String(crypto.randomInt(100000, 1000000));
+}
+
+function maskEmailAddress(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain || !local) return '***';
+  const visible = local.slice(0, Math.min(2, local.length));
+  return `${visible}***@${domain}`;
+}
 
 export interface UserRecord {
   id: string;
@@ -105,6 +131,7 @@ export class AuthService {
   private passwordResetTokens: Map<string, PasswordResetRecord> = new Map();
   private emailVerificationTokens: Map<string, string> = new Map(); // token -> userId
   private mfaTickets: Map<string, { userId: string; expiresAt: number }> = new Map();
+  private loginOtpChallenges: Map<string, LoginOtpChallenge> = new Map();
   /** In-process single-flight for concurrent refreshes of the same session. */
   private readonly refreshInFlight = new Map<
     string,
@@ -642,29 +669,20 @@ export class AuthService {
   }
 
   /**
-   * Login with Argon2 verification, lockout after 5 attempts, and TOTP support
+   * Login with Argon2 verification and lockout after 5 attempts.
+   * Always requires email OTP next; authenticator MFA (if enrolled) is a third step.
    */
   async login(
     input: LoginUserInput,
     ipAddress: string,
     userAgent = 'Unknown Client',
-  ): Promise<
-    | {
-        requiresMfa: false;
-        accessToken: string;
-        refreshToken: string;
-        user: Omit<UserRecord, 'passwordHash' | 'mfaSecret' | 'mfaRecoveryCodes'>;
-        session: { id: string; createdAt: string; deviceInfo: string };
-      }
-    | {
-        requiresMfa: true;
-        mfaTicket: string;
-        sandboxMfaHint?: {
-          totpCode?: string;
-          recoveryCodes?: string[];
-        };
-      }
-  > {
+  ): Promise<{
+    requiresEmailOtp: true;
+    otpTicket: string;
+    maskedEmail: string;
+    expiresInSeconds: number;
+    sandboxOtpHint?: string;
+  }> {
     await this.ensureReady();
     const validated = LoginUserSchema.parse(input);
     const emailLower = validated.email.toLowerCase();
@@ -758,49 +776,234 @@ export class AuthService {
     }
     this.saveUser(user);
 
-    // 3. Multi-Factor Authentication check (after member enrolls TOTP)
-    const isMfaRequired = user.mfaEnabled;
+    // 3. Always require email OTP (never issue tokens here)
+    return this.issueLoginEmailOtp(user);
+  }
 
-    if (isMfaRequired) {
-      // If code was not provided directly in login form, issue MFA Ticket
-      if (!validated.totpCode) {
-        const mfaTicket = crypto.randomBytes(24).toString('hex');
-        this.mfaTickets.set(mfaTicket, {
-          userId: user.id,
-          expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes validity
-        });
-        return {
-          requiresMfa: true,
-          mfaTicket,
-          sandboxMfaHint: this.configService.isSandbox
-            ? {
-                totpCode: user.mfaSecret ? generateTotpCode(user.mfaSecret) : undefined,
-                recoveryCodes: [...user.mfaRecoveryCodes],
-              }
-            : undefined,
-        };
-      }
+  private async issueLoginEmailOtp(user: UserRecord): Promise<{
+    requiresEmailOtp: true;
+    otpTicket: string;
+    maskedEmail: string;
+    expiresInSeconds: number;
+    sandboxOtpHint?: string;
+  }> {
+    const code = generateLoginOtpCode();
+    const now = new Date();
+    const otpTicket = crypto.randomBytes(24).toString('hex');
+    const challenge: LoginOtpChallenge = {
+      ticketId: otpTicket,
+      userId: user.id,
+      otpHash: hashLoginOtp(code),
+      attempts: 0,
+      expiresAt: new Date(now.getTime() + LOGIN_OTP_TTL_MS).toISOString(),
+      lastSentAt: now.toISOString(),
+      createdAt: now.toISOString(),
+    };
+    this.loginOtpChallenges.set(otpTicket, challenge);
+    void persistLoginOtp(challenge);
+    void this.emailService.sendLoginOtpEmail(user.email, user.fullName, {
+      code,
+      expiresInMinutes: 10,
+    });
 
-      // Verify provided TOTP code or recovery code
-      const mfaOk = this.verifyUserMfaOrRecoveryCode(user, validated.totpCode);
-      if (!mfaOk) {
-        await this.auditService.record({
-          actorId: user.id,
-          actorRole: user.role,
-          action: 'AUTH_LOGIN_FAILED',
-          targetType: 'USER',
-          targetId: user.id,
-          beforeState: null,
-          afterState: { reason: 'Invalid MFA TOTP or Recovery code' },
-          ipAddress,
-          userAgent,
-        });
-        throw new Error('Invalid Two-Factor Authentication code.');
+    const exposeOtpHint =
+      this.configService.isSandbox || process.env.NODE_ENV === 'test';
+    return {
+      requiresEmailOtp: true,
+      otpTicket,
+      maskedEmail: maskEmailAddress(user.email),
+      expiresInSeconds: LOGIN_OTP_EXPIRES_SECONDS,
+      sandboxOtpHint: exposeOtpHint ? code : undefined,
+    };
+  }
+
+  private async getLoginOtpChallenge(
+    otpTicket: string,
+  ): Promise<LoginOtpChallenge | null> {
+    let challenge = this.loginOtpChallenges.get(otpTicket) ?? null;
+    if (!challenge) {
+      challenge = await loadPersistedLoginOtp(otpTicket);
+      if (challenge) {
+        this.loginOtpChallenges.set(otpTicket, challenge);
       }
     }
+    return challenge;
+  }
 
-    // 4. Create authenticated session & issue token pair
+  /**
+   * Verify email OTP issued after password login.
+   * If authenticator MFA is enrolled, continue with requiresMfa; otherwise issue session.
+   */
+  async verifyLoginEmailOtp(
+    otpTicket: string,
+    code: string,
+    ipAddress: string,
+    userAgent = 'Unknown Client',
+  ) {
+    await this.ensureReady();
+    const challenge = await this.getLoginOtpChallenge(otpTicket);
+    if (!challenge) {
+      const err: any = new Error(
+        'Sign-in code expired or invalid. Please sign in again.',
+      );
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (Date.now() > new Date(challenge.expiresAt).getTime()) {
+      this.loginOtpChallenges.delete(otpTicket);
+      void deletePersistedLoginOtp(otpTicket);
+      const err: any = new Error(
+        'Sign-in code expired. Please sign in again.',
+      );
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (challenge.attempts >= LOGIN_OTP_MAX_ATTEMPTS) {
+      this.loginOtpChallenges.delete(otpTicket);
+      void deletePersistedLoginOtp(otpTicket);
+      const err: any = new Error(
+        'Too many incorrect sign-in codes. Please sign in again.',
+      );
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const user = this.users.get(challenge.userId);
+    if (!user) {
+      this.loginOtpChallenges.delete(otpTicket);
+      void deletePersistedLoginOtp(otpTicket);
+      throw new Error('User not found.');
+    }
+
+    const codeHash = hashLoginOtp(code);
+    if (codeHash !== challenge.otpHash) {
+      challenge.attempts += 1;
+      this.loginOtpChallenges.set(otpTicket, challenge);
+      void persistLoginOtp(challenge);
+      await this.auditService.record({
+        actorId: user.id,
+        actorRole: user.role,
+        action: 'AUTH_LOGIN_FAILED',
+        targetType: 'USER',
+        targetId: user.id,
+        beforeState: null,
+        afterState: {
+          reason: 'Invalid email OTP',
+          attempts: challenge.attempts,
+        },
+        ipAddress,
+        userAgent,
+      });
+      const remaining = LOGIN_OTP_MAX_ATTEMPTS - challenge.attempts;
+      if (remaining <= 0) {
+        this.loginOtpChallenges.delete(otpTicket);
+        void deletePersistedLoginOtp(otpTicket);
+        const err: any = new Error(
+          'Too many incorrect sign-in codes. Please sign in again.',
+        );
+        err.statusCode = 401;
+        throw err;
+      }
+      const err: any = new Error(
+        `Invalid sign-in code. ${remaining} attempt(s) remaining.`,
+      );
+      err.statusCode = 401;
+      throw err;
+    }
+
+    this.loginOtpChallenges.delete(otpTicket);
+    void deletePersistedLoginOtp(otpTicket);
+
+    if (user.mfaEnabled) {
+      const mfaTicket = crypto.randomBytes(24).toString('hex');
+      this.mfaTickets.set(mfaTicket, {
+        userId: user.id,
+        expiresAt: Date.now() + 5 * 60 * 1000,
+      });
+      return {
+        requiresMfa: true as const,
+        mfaTicket,
+        sandboxMfaHint: this.configService.isSandbox
+          ? {
+              totpCode: user.mfaSecret ? generateTotpCode(user.mfaSecret) : undefined,
+              recoveryCodes: [...user.mfaRecoveryCodes],
+            }
+          : undefined,
+      };
+    }
+
     return this.createSessionAndIssueTokens(user, ipAddress, userAgent);
+  }
+
+  async resendLoginEmailOtp(otpTicket: string): Promise<{
+    ok: true;
+    maskedEmail: string;
+    expiresInSeconds: number;
+    cooldownSeconds: number;
+    sandboxOtpHint?: string;
+  }> {
+    await this.ensureReady();
+    const challenge = await this.getLoginOtpChallenge(otpTicket);
+    if (!challenge) {
+      const err: any = new Error(
+        'Sign-in code expired or invalid. Please sign in again.',
+      );
+      err.statusCode = 401;
+      throw err;
+    }
+
+    if (Date.now() > new Date(challenge.expiresAt).getTime()) {
+      this.loginOtpChallenges.delete(otpTicket);
+      void deletePersistedLoginOtp(otpTicket);
+      const err: any = new Error(
+        'Sign-in code expired. Please sign in again.',
+      );
+      err.statusCode = 401;
+      throw err;
+    }
+
+    const lastSent = new Date(challenge.lastSentAt).getTime();
+    const elapsed = Date.now() - lastSent;
+    if (elapsed < LOGIN_OTP_RESEND_COOLDOWN_MS) {
+      const waitSec = Math.ceil((LOGIN_OTP_RESEND_COOLDOWN_MS - elapsed) / 1000);
+      const err: any = new Error(
+        `Please wait ${waitSec} second(s) before requesting a new code.`,
+      );
+      err.statusCode = 429;
+      throw err;
+    }
+
+    const user = this.users.get(challenge.userId);
+    if (!user) {
+      this.loginOtpChallenges.delete(otpTicket);
+      void deletePersistedLoginOtp(otpTicket);
+      throw new Error('User not found.');
+    }
+
+    const code = generateLoginOtpCode();
+    const now = new Date();
+    challenge.otpHash = hashLoginOtp(code);
+    challenge.attempts = 0;
+    challenge.lastSentAt = now.toISOString();
+    challenge.expiresAt = new Date(now.getTime() + LOGIN_OTP_TTL_MS).toISOString();
+    this.loginOtpChallenges.set(otpTicket, challenge);
+    void persistLoginOtp(challenge);
+    void this.emailService.sendLoginOtpEmail(user.email, user.fullName, {
+      code,
+      expiresInMinutes: 10,
+    });
+
+    const exposeOtpHint =
+      this.configService.isSandbox || process.env.NODE_ENV === 'test';
+    return {
+      ok: true,
+      maskedEmail: maskEmailAddress(user.email),
+      expiresInSeconds: LOGIN_OTP_EXPIRES_SECONDS,
+      cooldownSeconds: 60,
+      sandboxOtpHint: exposeOtpHint ? code : undefined,
+    };
   }
 
   /**

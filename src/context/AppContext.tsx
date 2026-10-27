@@ -257,6 +257,8 @@ interface AppContextType {
   openSecurityModal: (tab?: 'mfa' | 'password' | 'sessions' | 'token_rotation') => void;
   closeSecurityModal: () => void;
   loginUser: (params: { email: string; password: string; totpCode?: string }) => Promise<any>;
+  completeEmailOtpLogin: (params: { otpTicket: string; code: string }) => Promise<any>;
+  resendEmailOtp: (params: { otpTicket: string }) => Promise<any>;
   completeMfaLogin: (params: { mfaTicket: string; totpCode: string }) => Promise<any>;
   rotateTokens: () => Promise<any>;
   registerUser: (params: any) => Promise<any>;
@@ -1125,19 +1127,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
   const closeSecurityModal = () => setIsSecurityModalOpen(false);
 
-  const loginUser = async (params: { email: string; password: string; totpCode?: string }) => {
-    const res = await fetch('/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.message || 'Login failed.');
-    }
-    if (data.requiresMfa) {
-      return data;
-    }
+  const applyAuthenticatedSession = async (data: {
+    accessToken: string;
+    refreshToken: string;
+    user: any;
+  }) => {
     setAuthToken(data.accessToken);
     setRefreshToken(data.refreshToken);
     localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
@@ -1152,6 +1146,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await fetchKycStatus(data.accessToken, data.user);
       await fetchMemberWalletActivity(data.accessToken);
       await fetchMemberLoans(data.accessToken);
+    }
+  };
+
+  const loginUser = async (params: { email: string; password: string; totpCode?: string }) => {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.message || 'Login failed.');
+    }
+    // Password OK → email OTP required (never a full session yet)
+    if (data.requiresEmailOtp) {
+      return data;
+    }
+    // Legacy / unexpected full login payload
+    if (data.accessToken && data.user) {
+      await applyAuthenticatedSession(data);
+    }
+    return data;
+  };
+
+  const completeEmailOtpLogin = async (params: { otpTicket: string; code: string }) => {
+    const res = await fetch('/auth/email-otp-verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.message || 'Sign-in code verification failed.');
+    }
+    if (data.requiresMfa) {
+      return data;
+    }
+    await applyAuthenticatedSession(data);
+    return data;
+  };
+
+  const resendEmailOtp = async (params: { otpTicket: string }) => {
+    const res = await fetch('/auth/email-otp-resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.message || 'Could not resend sign-in code.');
     }
     return data;
   };
@@ -1166,21 +1210,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     if (!res.ok) {
       throw new Error(data.message || 'Two-Factor Authentication verification failed.');
     }
-    setAuthToken(data.accessToken);
-    setRefreshToken(data.refreshToken);
-    localStorage.setItem('lumenfield_refresh_token', data.refreshToken);
-    setCurrentUser(data.user);
-    ensureMemberForUser(data.user);
-    if (data.user.role === 'SUPER_ADMIN') {
-      setAdminTab('members');
-      setCurrentView('admin');
-      await fetchAdminDashboardStats(data.accessToken);
-    } else {
-      setCurrentView('member');
-      await fetchKycStatus(data.accessToken, data.user);
-      await fetchMemberWalletActivity(data.accessToken);
-      await fetchMemberLoans(data.accessToken);
-    }
+    await applyAuthenticatedSession(data);
     return data;
   };
 
@@ -2800,6 +2830,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         openSecurityModal,
         closeSecurityModal,
         loginUser,
+        completeEmailOtpLogin,
+        resendEmailOtp,
         completeMfaLogin,
         rotateTokens,
         registerUser,

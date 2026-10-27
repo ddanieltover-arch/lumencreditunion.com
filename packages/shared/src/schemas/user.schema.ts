@@ -68,6 +68,19 @@ export const MfaVerifyLoginSchema = z.object({
 });
 export type MfaVerifyLoginInput = z.infer<typeof MfaVerifyLoginSchema>;
 
+export const EmailOtpVerifySchema = z.object({
+  otpTicket: z.string().min(1),
+  code: z
+    .string()
+    .regex(/^\d{6}$/, 'Sign-in code must be 6 digits'),
+});
+export type EmailOtpVerifyInput = z.infer<typeof EmailOtpVerifySchema>;
+
+export const EmailOtpResendSchema = z.object({
+  otpTicket: z.string().min(1),
+});
+export type EmailOtpResendInput = z.infer<typeof EmailOtpResendSchema>;
+
 export const PasswordResetRequestSchema = z.object({
   email: z.string().email(),
 });

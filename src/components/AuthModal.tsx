@@ -31,11 +31,20 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   initialMode = 'login',
   initialResetToken = '',
 }) => {
-  const { countries, showToast, loginUser, registerUser, completeMfaLogin, currentUser } = useApp();
+  const {
+    countries,
+    showToast,
+    loginUser,
+    registerUser,
+    completeEmailOtpLogin,
+    resendEmailOtp,
+    completeMfaLogin,
+    currentUser,
+  } = useApp();
 
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset' | 'mfa_prompt'>(
-    initialMode,
-  );
+  const [mode, setMode] = useState<
+    'login' | 'register' | 'forgot' | 'reset' | 'email_otp_prompt' | 'mfa_prompt'
+  >(initialMode);
 
   // Form states
   const [email, setEmail] = useState('');
@@ -45,6 +54,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [countryCode, setCountryCode] = useState('US');
   const [dateOfBirth, setDateOfBirth] = useState('');
   const [totpCode, setTotpCode] = useState('');
+  const [emailOtpCode, setEmailOtpCode] = useState('');
+  const [otpTicket, setOtpTicket] = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [otpResendCooldownSec, setOtpResendCooldownSec] = useState(0);
+  const [sandboxOtpHint, setSandboxOtpHint] = useState<string | undefined>();
   const [mfaTicket, setMfaTicket] = useState('');
   const [isRecoveryCodeMode, setIsRecoveryCodeMode] = useState(false);
   const [resetToken, setResetToken] = useState(initialResetToken);
@@ -67,6 +81,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setInfoMsg(null);
   }, [isOpen, initialMode, initialResetToken]);
 
+  useEffect(() => {
+    if (otpResendCooldownSec <= 0) return;
+    const timer = window.setTimeout(() => {
+      setOtpResendCooldownSec((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [otpResendCooldownSec]);
+
   // Filter out any sanctioned countries for registration
   const registrationCountries = countries.filter((c) => c.enabled && !c.isSanctioned);
 
@@ -76,7 +98,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
 
     try {
-      const res = await loginUser({ email, password, totpCode: totpCode.trim() || undefined });
+      const res = await loginUser({ email, password });
+      if (res.requiresEmailOtp) {
+        setOtpTicket(res.otpTicket);
+        setMaskedEmail(res.maskedEmail || '');
+        setEmailOtpCode('');
+        setSandboxOtpHint(res.sandboxOtpHint);
+        setOtpResendCooldownSec(60);
+        setMode('email_otp_prompt');
+        showToast('We sent a sign-in code to your email.', 'info');
+        return;
+      }
       if (res.requiresMfa) {
         setMfaTicket(res.mfaTicket);
         setMode('mfa_prompt');
@@ -91,6 +123,49 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setLockoutSec(900); // 15 min
       }
       setErrorMsg(msg);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailOtpSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setLoading(true);
+
+    try {
+      const res = await completeEmailOtpLogin({
+        otpTicket,
+        code: emailOtpCode.trim(),
+      });
+      if (res.requiresMfa) {
+        setMfaTicket(res.mfaTicket);
+        setTotpCode('');
+        setMode('mfa_prompt');
+        showToast('Two-Factor Authentication required. Enter code to continue.', 'info');
+      } else {
+        showToast(`Welcome back, ${res.user.fullName}!`, 'success');
+        onClose();
+      }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Invalid sign-in code.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailOtpResend = async () => {
+    if (otpResendCooldownSec > 0 || loading) return;
+    setErrorMsg(null);
+    setLoading(true);
+    try {
+      const res = await resendEmailOtp({ otpTicket });
+      setOtpResendCooldownSec(res.cooldownSeconds ?? 60);
+      if (res.sandboxOtpHint) setSandboxOtpHint(res.sandboxOtpHint);
+      if (res.maskedEmail) setMaskedEmail(res.maskedEmail);
+      showToast('A new sign-in code was sent.', 'info');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Could not resend sign-in code.');
     } finally {
       setLoading(false);
     }
@@ -253,6 +328,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               <h2 id="auth-modal-title" className="text-base font-bold font-display text-white">
                 {mode === 'login' && t('auth.signInTitle')}
                 {mode === 'register' && t('auth.registerTitle')}
+                {mode === 'email_otp_prompt' && 'Check your email'}
                 {mode === 'mfa_prompt' && t('auth.totpTitle')}
                 {mode === 'forgot' && t('auth.resetPasswordTitle')}
                 {mode === 'reset' && t('auth.confirmResetTitle')}
@@ -260,6 +336,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {mode !== 'register' && (
                 <p className="text-xs text-[#DCE5E3]/80">
                   {mode === 'login' && t('auth.signInSubtitle')}
+                  {mode === 'email_otp_prompt' &&
+                    (maskedEmail
+                      ? `Enter the 6-digit code sent to ${maskedEmail}.`
+                      : 'Enter the 6-digit code we sent to your email.')}
                   {mode === 'mfa_prompt' &&
                     (isRecoveryCodeMode ? t('auth.recoveryCodeSubtitle') : t('auth.totpSubtitle'))}
                   {mode === 'forgot' && t('auth.resetPasswordSubtitle')}
@@ -375,7 +455,77 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </form>
           )}
 
-          {/* 2. TWO-FACTOR AUTHENTICATION PROMPT */}
+          {/* 2. EMAIL OTP PROMPT */}
+          {mode === 'email_otp_prompt' && (
+            <form onSubmit={handleEmailOtpSubmit} className="space-y-4">
+              <div>
+                <label
+                  htmlFor="email-otp-code"
+                  className="block text-xs font-semibold text-[#0E1B1F] mb-1.5"
+                >
+                  6-Digit Sign-in Code
+                </label>
+                <div className="relative">
+                  <Mail className="w-4 h-4 text-[#0F766E] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    id="email-otp-code"
+                    type="text"
+                    inputMode="numeric"
+                    pattern="\d{6}"
+                    required
+                    autoFocus
+                    maxLength={6}
+                    value={emailOtpCode}
+                    onChange={(e) =>
+                      setEmailOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                    }
+                    placeholder="123456"
+                    className="w-full pl-10 pr-3 py-2.5 bg-[#F4F7F6] border border-[#DCE5E3] rounded-xl text-center text-lg font-mono font-bold tracking-widest text-[#0E1B1F] focus:outline-none focus:ring-2 focus:ring-[#0A3D3F] min-h-[44px]"
+                  />
+                </div>
+                {sandboxOtpHint && (
+                  <p className="mt-2 text-[11px] text-[#4A5B60] font-mono">
+                    Sandbox hint: {sandboxOtpHint}
+                  </p>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={loading || emailOtpCode.length !== 6}
+                className="w-full bg-[#0A3D3F] hover:bg-[#072F30] text-white font-bold py-2.5 px-4 rounded-xl shadow-xs transition flex items-center justify-center gap-2 min-h-[44px] cursor-pointer disabled:opacity-50"
+              >
+                {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Verify & Continue'}
+              </button>
+
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode('login');
+                    setEmailOtpCode('');
+                    setOtpTicket('');
+                    setSandboxOtpHint(undefined);
+                  }}
+                  className="text-xs font-semibold text-[#4A5B60] hover:text-[#0E1B1F] cursor-pointer"
+                >
+                  ← Back to Sign In
+                </button>
+                <button
+                  type="button"
+                  disabled={loading || otpResendCooldownSec > 0}
+                  onClick={handleEmailOtpResend}
+                  className="text-xs font-semibold text-[#0F766E] hover:underline cursor-pointer disabled:opacity-50 disabled:no-underline"
+                >
+                  {otpResendCooldownSec > 0
+                    ? `Resend in ${otpResendCooldownSec}s`
+                    : 'Resend code'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {/* 3. TWO-FACTOR AUTHENTICATION PROMPT */}
           {mode === 'mfa_prompt' && (
             <form onSubmit={handleMfaSubmit} className="space-y-4">
               <div>

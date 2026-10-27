@@ -126,6 +126,14 @@ export class EmailService {
     return this.deliver(to, authTpl.verificationEmail(this.base(fullName), token));
   }
 
+  async sendLoginOtpEmail(
+    to: string,
+    fullName: string,
+    params: { code: string; expiresInMinutes: number },
+  ) {
+    return this.deliver(to, authTpl.loginOtpEmail(this.base(fullName), params));
+  }
+
   async sendWelcomeEmail(to: string, fullName: string) {
     return this.deliver(to, authTpl.welcomeEmail(this.base(fullName)));
   }

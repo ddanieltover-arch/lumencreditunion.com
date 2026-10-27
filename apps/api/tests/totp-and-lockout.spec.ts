@@ -83,18 +83,28 @@ describe('Auth Security: Lockout, TOTP MFA, and Registration Rules', () => {
     );
     expect(confirmRes.success).toBe(true);
 
-    // Now login requires MFA:
-    const loginPrompt = await authService.login(
+    // Login → email OTP → then authenticator MFA
+    const loginOtp = await authService.login(
       { email: 'mfa.user@lumenfield.internal', password: 'Password123!@#' },
       '127.0.0.1',
     );
-    expect(loginPrompt.requiresMfa).toBe(true);
-    if (!loginPrompt.requiresMfa) throw new Error('MFA was expected');
+    expect(loginOtp.requiresEmailOtp).toBe(true);
+    expect(loginOtp.sandboxOtpHint).toBeDefined();
+
+    const afterEmailOtp = await authService.verifyLoginEmailOtp(
+      loginOtp.otpTicket,
+      loginOtp.sandboxOtpHint!,
+      '127.0.0.1',
+    );
+    expect(afterEmailOtp.requiresMfa).toBe(true);
+    if (!('requiresMfa' in afterEmailOtp) || !afterEmailOtp.requiresMfa) {
+      throw new Error('MFA was expected after email OTP');
+    }
 
     // Use recovery code
     const recoveryCode = enrollment.recoveryCodes[0];
     const ticketLogin = await authService.verifyMfaTicketAndLogin(
-      loginPrompt.mfaTicket,
+      afterEmailOtp.mfaTicket,
       recoveryCode,
       '127.0.0.1',
     );

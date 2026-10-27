@@ -23,7 +23,7 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
       '127.0.0.1',
     );
 
-    // 2. Log in to receive first token pair (Access A1, Refresh R1)
+    // 2. Log in → email OTP → receive first token pair (Access A1, Refresh R1)
     const loginRes = await authService.login(
       {
         email: 'token.test@lumenfield.internal',
@@ -31,11 +31,17 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
       },
       '127.0.0.1',
     );
-
-    if (loginRes.requiresMfa) {
+    expect(loginRes.requiresEmailOtp).toBe(true);
+    expect(loginRes.sandboxOtpHint).toBeDefined();
+    const otpLogin = await authService.verifyLoginEmailOtp(
+      loginRes.otpTicket,
+      loginRes.sandboxOtpHint!,
+      '127.0.0.1',
+    );
+    if ('requiresMfa' in otpLogin && otpLogin.requiresMfa) {
       throw new Error('Unexpected MFA prompt for standard member');
     }
-    const successRes = loginRes as Extract<typeof loginRes, { requiresMfa: false }>;
+    const successRes = otpLogin as Exclude<typeof otpLogin, { requiresMfa: true }>;
 
     const { accessToken: a1, refreshToken: r1 } = successRes;
     expect(a1).toBeDefined();
@@ -75,9 +81,16 @@ describe('Acceptance Criterion: Refresh token rotation & replay revocation', () 
       },
       '127.0.0.1',
     );
-
-    if (loginRes.requiresMfa) throw new Error('Unexpected MFA');
-    const successLogin = loginRes as Extract<typeof loginRes, { requiresMfa: false }>;
+    expect(loginRes.requiresEmailOtp).toBe(true);
+    const otpLogin = await authService.verifyLoginEmailOtp(
+      loginRes.otpTicket,
+      loginRes.sandboxOtpHint!,
+      '127.0.0.1',
+    );
+    if ('requiresMfa' in otpLogin && otpLogin.requiresMfa) {
+      throw new Error('Unexpected MFA');
+    }
+    const successLogin = otpLogin as Exclude<typeof otpLogin, { requiresMfa: true }>;
     const r1 = successLogin.refreshToken;
 
     // 2. Legitimate user rotates R1 to R2

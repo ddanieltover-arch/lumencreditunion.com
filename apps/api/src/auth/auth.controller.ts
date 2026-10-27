@@ -43,6 +43,32 @@ export class AuthController {
     }
   };
 
+  verifyEmailOtp = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const ip = (req.ip || '127.0.0.1').toString();
+      const { otpTicket, code } = req.body;
+      const result = await this.authService.verifyLoginEmailOtp(
+        otpTicket,
+        code,
+        ip,
+        req.headers['user-agent'],
+      );
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  resendEmailOtp = async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const { otpTicket } = req.body;
+      const result = await this.authService.resendLoginEmailOtp(otpTicket);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  };
+
   verifyMfa = async (req: Request, res: Response, next: NextFunction) => {
     try {
       const ip = (req.ip || '127.0.0.1').toString();

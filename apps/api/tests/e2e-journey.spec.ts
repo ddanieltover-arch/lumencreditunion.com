@@ -84,7 +84,7 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
     expect(registerBody.user.role).toBe('MEMBER');
     const newMemberId = registerBody.user.id;
 
-    // Login as new member
+    // Login as new member (password → email OTP → session)
     const loginRes = await fetch(`${baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -95,7 +95,21 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
     });
     expect(loginRes.status).toBe(200);
     const loginBody = await loginRes.json();
-    const memberAccessToken = loginBody.accessToken;
+    expect(loginBody.requiresEmailOtp).toBe(true);
+    expect(loginBody.otpTicket).toBeDefined();
+    expect(loginBody.sandboxOtpHint).toBeDefined();
+
+    const memberOtpRes = await fetch(`${baseUrl}/auth/email-otp-verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        otpTicket: loginBody.otpTicket,
+        code: loginBody.sandboxOtpHint,
+      }),
+    });
+    expect(memberOtpRes.status).toBe(200);
+    const memberOtpBody = await memberOtpRes.json();
+    const memberAccessToken = memberOtpBody.accessToken;
     expect(memberAccessToken).toBeDefined();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -146,7 +160,7 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
     // ─────────────────────────────────────────────────────────────────────────
     // STEP 3: SUPER ADMIN REVIEWS & APPROVES KYC
     // ─────────────────────────────────────────────────────────────────────────
-    // Admin login with mandatory MFA
+    // Admin login: password → email OTP → mandatory authenticator MFA
     const adminLoginRes = await fetch(`${baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -157,17 +171,30 @@ describe('End-to-End User Journey: Register, Verify, Admin Funds Wallet, Member 
     });
     expect(adminLoginRes.status).toBe(200);
     const adminLoginBody = await adminLoginRes.json();
-    expect(adminLoginBody.requiresMfa).toBe(true);
-    expect(adminLoginBody.mfaTicket).toBeDefined();
+    expect(adminLoginBody.requiresEmailOtp).toBe(true);
+    expect(adminLoginBody.sandboxOtpHint).toBeDefined();
 
-    const adminTotp = adminLoginBody.sandboxMfaHint?.totpCode;
+    const adminEmailOtpRes = await fetch(`${baseUrl}/auth/email-otp-verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        otpTicket: adminLoginBody.otpTicket,
+        code: adminLoginBody.sandboxOtpHint,
+      }),
+    });
+    expect(adminEmailOtpRes.status).toBe(200);
+    const adminEmailOtpBody = await adminEmailOtpRes.json();
+    expect(adminEmailOtpBody.requiresMfa).toBe(true);
+    expect(adminEmailOtpBody.mfaTicket).toBeDefined();
+
+    const adminTotp = adminEmailOtpBody.sandboxMfaHint?.totpCode;
     expect(adminTotp).toBeDefined();
 
     const adminMfaRes = await fetch(`${baseUrl}/auth/mfa-verify`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        mfaTicket: adminLoginBody.mfaTicket,
+        mfaTicket: adminEmailOtpBody.mfaTicket,
         totpCode: adminTotp,
       }),
     });

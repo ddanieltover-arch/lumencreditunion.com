@@ -22,6 +22,8 @@ import {
   WalletTransferSchema,
   RegisterUserSchema,
   LoginUserSchema,
+  EmailOtpVerifySchema,
+  EmailOtpResendSchema,
   MfaVerifyLoginSchema,
   PasswordResetRequestSchema,
   PasswordResetConfirmSchema,
@@ -349,6 +351,18 @@ export function createApiApp(
   );
   app.post('/auth/verify-email', authRateLimiter, authController.verifyEmail);
   app.post('/auth/login', authRateLimiter, validateZod(LoginUserSchema), authController.login);
+  app.post(
+    '/auth/email-otp-verify',
+    authRateLimiter,
+    validateZod(EmailOtpVerifySchema),
+    authController.verifyEmailOtp,
+  );
+  app.post(
+    '/auth/email-otp-resend',
+    authRateLimiter,
+    validateZod(EmailOtpResendSchema),
+    authController.resendEmailOtp,
+  );
   app.post(
     '/auth/mfa-verify',
     authRateLimiter,

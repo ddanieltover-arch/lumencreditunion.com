@@ -106,6 +106,25 @@ export function accountLockedEmail(
   });
 }
 
+export function loginOtpEmail(
+  base: Base,
+  params: { code: string; expiresInMinutes: number },
+): RenderedEmail {
+  return buildEmail('Your Lumenfield sign-in code', {
+    ...base,
+    preheader: `Your sign-in code is ${params.code}. It expires in ${params.expiresInMinutes} minutes.`,
+    headline: 'Your sign-in code',
+    greetingName: base.fullName,
+    paragraphs: [
+      'Use this one-time code to finish signing in to your Lumenfield Credit Union account.',
+      `This code expires in ${params.expiresInMinutes} minutes and can only be used once.`,
+    ],
+    details: [{ label: 'Sign-in code', value: params.code }],
+    securityNote:
+      'If you did not request this code, you can ignore this email. Do not share the code with anyone.',
+  });
+}
+
 export function newLoginEmail(
   base: Base,
   details: { deviceInfo: string; ipAddress: string; when: string },
