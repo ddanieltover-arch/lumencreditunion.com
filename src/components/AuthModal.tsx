@@ -106,7 +106,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setSandboxOtpHint(res.sandboxOtpHint);
         setOtpResendCooldownSec(60);
         setMode('email_otp_prompt');
-        showToast('We sent a sign-in code to your email.', 'info');
+        if (res.emailSent === false) {
+          setErrorMsg(
+            'We could not deliver the sign-in email. Check spam, then use Resend. If it still fails, contact support.',
+          );
+          showToast('Sign-in email could not be delivered.', 'error');
+        } else {
+          showToast('We sent a sign-in code to your email.', 'info');
+        }
         return;
       }
       if (res.requiresMfa) {
@@ -163,7 +170,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setOtpResendCooldownSec(res.cooldownSeconds ?? 60);
       if (res.sandboxOtpHint) setSandboxOtpHint(res.sandboxOtpHint);
       if (res.maskedEmail) setMaskedEmail(res.maskedEmail);
-      showToast('A new sign-in code was sent.', 'info');
+      if (res.emailSent === false) {
+        setErrorMsg(
+          'We could not deliver the sign-in email. Check spam, then try Resend again.',
+        );
+        showToast('Sign-in email could not be delivered.', 'error');
+      } else {
+        showToast('A new sign-in code was sent.', 'info');
+      }
     } catch (err: any) {
       setErrorMsg(err.message || 'Could not resend sign-in code.');
     } finally {

@@ -800,11 +800,18 @@ export class AuthService {
       createdAt: now.toISOString(),
     };
     this.loginOtpChallenges.set(otpTicket, challenge);
-    void persistLoginOtp(challenge);
-    void this.emailService.sendLoginOtpEmail(user.email, user.fullName, {
-      code,
-      expiresInMinutes: 10,
-    });
+    await persistLoginOtp(challenge);
+    // Await delivery — on Vercel, voided promises are often frozen before Resend completes.
+    const emailResult = await this.emailService.sendLoginOtpEmail(
+      user.email,
+      user.fullName,
+      { code, expiresInMinutes: 10 },
+    );
+    if (!emailResult.ok) {
+      console.error(
+        `[AuthService] Login OTP email failed for user ${user.id} (ticket ${otpTicket})`,
+      );
+    }
 
     const exposeOtpHint =
       this.configService.isSandbox || process.env.NODE_ENV === 'test';
@@ -813,6 +820,7 @@ export class AuthService {
       otpTicket,
       maskedEmail: maskEmailAddress(user.email),
       expiresInSeconds: LOGIN_OTP_EXPIRES_SECONDS,
+      emailSent: emailResult.ok && !emailResult.mocked,
       sandboxOtpHint: exposeOtpHint ? code : undefined,
     };
   }
@@ -989,11 +997,17 @@ export class AuthService {
     challenge.lastSentAt = now.toISOString();
     challenge.expiresAt = new Date(now.getTime() + LOGIN_OTP_TTL_MS).toISOString();
     this.loginOtpChallenges.set(otpTicket, challenge);
-    void persistLoginOtp(challenge);
-    void this.emailService.sendLoginOtpEmail(user.email, user.fullName, {
-      code,
-      expiresInMinutes: 10,
-    });
+    await persistLoginOtp(challenge);
+    const emailResult = await this.emailService.sendLoginOtpEmail(
+      user.email,
+      user.fullName,
+      { code, expiresInMinutes: 10 },
+    );
+    if (!emailResult.ok) {
+      console.error(
+        `[AuthService] Login OTP resend email failed for user ${user.id} (ticket ${otpTicket})`,
+      );
+    }
 
     const exposeOtpHint =
       this.configService.isSandbox || process.env.NODE_ENV === 'test';
@@ -1002,6 +1016,7 @@ export class AuthService {
       maskedEmail: maskEmailAddress(user.email),
       expiresInSeconds: LOGIN_OTP_EXPIRES_SECONDS,
       cooldownSeconds: 60,
+      emailSent: emailResult.ok && !emailResult.mocked,
       sandboxOtpHint: exposeOtpHint ? code : undefined,
     };
   }
