@@ -681,6 +681,7 @@ export class AuthService {
     otpTicket: string;
     maskedEmail: string;
     expiresInSeconds: number;
+    emailSent: boolean;
     sandboxOtpHint?: string;
   }> {
     await this.ensureReady();
@@ -785,6 +786,7 @@ export class AuthService {
     otpTicket: string;
     maskedEmail: string;
     expiresInSeconds: number;
+    emailSent: boolean;
     sandboxOtpHint?: string;
   }> {
     const code = generateLoginOtpCode();
@@ -950,6 +952,7 @@ export class AuthService {
     maskedEmail: string;
     expiresInSeconds: number;
     cooldownSeconds: number;
+    emailSent: boolean;
     sandboxOtpHint?: string;
   }> {
     await this.ensureReady();
