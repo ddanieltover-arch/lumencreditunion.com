@@ -50,7 +50,7 @@ export class KycService {
   private static readonly STORE_REFRESH_TTL_MS = 2_000;
 
   constructor(
-    private readonly storageService: PrivateDocumentStorageService = new PrivateDocumentStorageService(),
+    private readonly storageService: PrivateDocumentStorageService = PrivateDocumentStorageService.getInstance(),
     private readonly sanctionsService: SanctionsScreeningService = new SandboxSanctionsScreeningService(),
     public readonly auditService: AuditService = new AuditService(),
     private readonly countriesService: CountriesService = new CountriesService(),
@@ -460,10 +460,10 @@ export class KycService {
   /**
    * Decrypt and view document using signed URL token (SUPER_ADMIN only)
    */
-  viewDocumentWithSignedToken(
+  async viewDocumentWithSignedToken(
     docId: string,
     token: string,
-  ): { buffer: Buffer; fileName: string; mimeType: string; checksum: string } {
+  ): Promise<{ buffer: Buffer; fileName: string; mimeType: string; checksum: string }> {
     const { fileKey } = this.storageService.verifySignedToken(docId, token);
     return this.storageService.decryptDocument(fileKey);
   }

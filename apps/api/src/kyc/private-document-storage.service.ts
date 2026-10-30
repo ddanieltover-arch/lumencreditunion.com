@@ -1,5 +1,10 @@
 import crypto from 'crypto';
 import { ConfigService } from '../config/config.service';
+import {
+  deletePersistedEncryptedDocument,
+  loadPersistedEncryptedDocument,
+  persistEncryptedDocument,
+} from './kyc-document-persistence';
 
 export interface StoredEncryptedDocument {
   fileKey: string;
@@ -18,6 +23,10 @@ export interface VirusScanResult {
   threatName?: string;
 }
 
+type GlobalStorage = typeof globalThis & {
+  __lumenDocStorage?: PrivateDocumentStorageService;
+};
+
 export class PrivateDocumentStorageService {
   private documents = new Map<string, StoredEncryptedDocument>();
   private readonly encryptionKey: Buffer;
@@ -32,6 +41,15 @@ export class PrivateDocumentStorageService {
       'lumenfield_default_storage_secret_key_32_bytes_min';
     this.encryptionKey = crypto.createHash('sha256').update(secret).digest();
     this.signingSecret = configService.get('JWT_SECRET');
+  }
+
+  /** Process-wide singleton so encrypted blobs survive warm serverless reuse. */
+  static getInstance(): PrivateDocumentStorageService {
+    const g = globalThis as GlobalStorage;
+    if (!g.__lumenDocStorage) {
+      g.__lumenDocStorage = new PrivateDocumentStorageService();
+    }
+    return g.__lumenDocStorage;
   }
 
   /**
@@ -106,6 +124,8 @@ export class PrivateDocumentStorageService {
     };
 
     this.documents.set(fileKey, record);
+    // Durable store so cold Vercel starts can still decrypt for admin review
+    await persistEncryptedDocument(record);
 
     return {
       fileKey,
@@ -171,6 +191,7 @@ export class PrivateDocumentStorageService {
     };
 
     this.documents.set(fileKey, record);
+    void persistEncryptedDocument(record);
     return { fileKey, checksum, fileSize: fileBuffer.length };
   }
 
@@ -209,15 +230,27 @@ export class PrivateDocumentStorageService {
     }
   }
 
+  private async resolveRecord(fileKey: string): Promise<StoredEncryptedDocument | null> {
+    let record = this.documents.get(fileKey) ?? null;
+    if (record) return record;
+    record = await loadPersistedEncryptedDocument(fileKey);
+    if (record) {
+      this.documents.set(fileKey, record);
+    }
+    return record;
+  }
+
   /**
    * Decrypt document buffer for SUPER_ADMIN review
    */
-  decryptDocument(
+  async decryptDocument(
     fileKey: string,
-  ): { buffer: Buffer; fileName: string; mimeType: string; checksum: string } {
-    const record = this.documents.get(fileKey);
+  ): Promise<{ buffer: Buffer; fileName: string; mimeType: string; checksum: string }> {
+    const record = await this.resolveRecord(fileKey);
     if (!record) {
-      throw new Error('Requested document not found in private storage bucket.');
+      throw new Error(
+        'Requested document not found in private storage. The file may have been uploaded before durable document storage was enabled — ask the member to re-submit their identity document.',
+      );
     }
 
     const decipher = crypto.createDecipheriv(
@@ -242,5 +275,10 @@ export class PrivateDocumentStorageService {
 
   hasDocument(fileKey: string): boolean {
     return this.documents.has(fileKey);
+  }
+
+  async deleteDocument(fileKey: string): Promise<void> {
+    this.documents.delete(fileKey);
+    await deletePersistedEncryptedDocument(fileKey);
   }
 }

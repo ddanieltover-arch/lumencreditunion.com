@@ -111,6 +111,7 @@ export class KycController {
   // View Document using signed URL token (Can be opened in <iframe> or <img> with token)
   viewDocument = async (req: Request, res: Response, next: NextFunction) => {
     try {
+      await this.kycService.ensureReady();
       const { docId } = req.params;
       const token = req.query.token as string;
       if (!token) {
@@ -118,10 +119,8 @@ export class KycController {
         return;
       }
 
-      const { buffer, mimeType, fileName, checksum } = this.kycService.viewDocumentWithSignedToken(
-        docId,
-        token,
-      );
+      const { buffer, mimeType, fileName, checksum } =
+        await this.kycService.viewDocumentWithSignedToken(docId, token);
 
       res.setHeader('Content-Type', mimeType);
       res.setHeader('Content-Length', buffer.length);
@@ -131,9 +130,11 @@ export class KycController {
       res.setHeader('Cache-Control', 'private, no-cache, no-store, must-revalidate');
       res.status(200).send(buffer);
     } catch (err: any) {
-      res.status(403).json({
-        statusCode: 403,
-        message: err.message || 'Forbidden: Invalid or expired signed URL.',
+      const message = err.message || 'Forbidden: Invalid or expired signed URL.';
+      const missing = /not found in private storage/i.test(message);
+      res.status(missing ? 404 : 403).json({
+        statusCode: missing ? 404 : 403,
+        message,
       });
     }
   };

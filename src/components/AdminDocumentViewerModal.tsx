@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Lock, ShieldAlert, Clock, CheckCircle2, FileText, Download } from 'lucide-react';
+import { X, Lock, ShieldAlert, Clock, CheckCircle2, RefreshCw } from 'lucide-react';
 
 interface AdminDocumentViewerModalProps {
   isOpen: boolean;
@@ -23,6 +23,9 @@ export const AdminDocumentViewerModal: React.FC<AdminDocumentViewerModalProps> =
   expiresInSeconds,
 }) => {
   const [secondsRemaining, setSecondsRemaining] = useState<number>(expiresInSeconds || 300);
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -41,12 +44,58 @@ export const AdminDocumentViewerModal: React.FC<AdminDocumentViewerModalProps> =
     return () => clearInterval(interval);
   }, [isOpen, expiresInSeconds]);
 
+  useEffect(() => {
+    if (!isOpen || !signedUrl) return;
+
+    let cancelled = false;
+    let createdUrl: string | null = null;
+
+    const load = async () => {
+      setLoading(true);
+      setLoadError(null);
+      setObjectUrl(null);
+      try {
+        const res = await fetch(signedUrl, {
+          method: 'GET',
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
+        if (!res.ok) {
+          let message = `Could not load document (${res.status}).`;
+          try {
+            const body = await res.json();
+            if (body?.message) message = String(body.message);
+          } catch {
+            /* ignore non-JSON error bodies */
+          }
+          throw new Error(message);
+        }
+        const blob = await res.blob();
+        if (cancelled) return;
+        createdUrl = URL.createObjectURL(blob);
+        setObjectUrl(createdUrl);
+      } catch (err: any) {
+        if (!cancelled) {
+          setLoadError(err?.message || 'Failed to load encrypted document.');
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void load();
+
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [isOpen, signedUrl]);
+
   if (!isOpen) return null;
 
   const minutes = Math.floor(secondsRemaining / 60);
   const seconds = secondsRemaining % 60;
   const isExpired = secondsRemaining <= 0;
-
   const isPdf = fileName.toLowerCase().endsWith('.pdf');
 
   return (
@@ -116,25 +165,36 @@ export const AdminDocumentViewerModal: React.FC<AdminDocumentViewerModalProps> =
                 Document signed URLs automatically expire after 5 minutes to prevent unauthorized persistence. Please generate a new signed URL from the review queue.
               </p>
             </div>
-          ) : isPdf ? (
+          ) : loading ? (
+            <div className="p-8 text-center space-y-2">
+              <RefreshCw className="w-8 h-8 text-[#0F766E] mx-auto animate-spin" />
+              <p className="text-xs text-[#4A5B60]">Decrypting document…</p>
+            </div>
+          ) : loadError ? (
+            <div className="p-8 text-center space-y-2 max-w-md">
+              <ShieldAlert className="w-12 h-12 text-red-500 mx-auto" />
+              <h4 className="font-bold text-base text-[#0E1B1F]">Unable to open document</h4>
+              <p className="text-xs text-[#4A5B60] leading-relaxed">{loadError}</p>
+            </div>
+          ) : objectUrl && isPdf ? (
             <iframe
-              src={signedUrl}
+              src={objectUrl}
               title={fileName}
               className="w-full h-[480px] border-none"
             />
-          ) : (
+          ) : objectUrl ? (
             <img
-              src={signedUrl}
+              src={objectUrl}
               alt={fileName}
               className="max-w-full max-h-[480px] object-contain p-2 rounded-xl"
             />
-          )}
+          ) : null}
         </div>
 
         {/* Footer info */}
         <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-[#4A5B60] pt-2 border-t border-[#DCE5E3]">
           <span className="text-[11px]">
-            Private S3-compatible storage with AES-256-GCM encryption. Never exposed to public web.
+            Private encrypted storage with AES-256-GCM. Never exposed to public web.
           </span>
           <button
             type="button"
