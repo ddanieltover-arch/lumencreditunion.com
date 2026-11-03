@@ -121,6 +121,17 @@ interface AppContextType {
     fundedAt?: string;
   }) => boolean;
 
+  debitWallet: (params: {
+    memberId: string;
+    amount: number;
+    currency: Currency;
+    source: string;
+    reference: string;
+    reason: string;
+    /** ISO-8601 effective debit time from admin. */
+    debitedAt?: string;
+  }) => boolean;
+
   sendTransfer: (params: {
     recipient: string;
     amount: number;
@@ -1516,6 +1527,167 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return true;
   };
 
+  // Debit Wallet (Admin clawback / adjustment)
+  const debitWallet = ({
+    memberId,
+    amount,
+    currency,
+    source,
+    reference,
+    reason,
+    debitedAt,
+  }: {
+    memberId: string;
+    amount: number;
+    currency: Currency;
+    source: string;
+    reference: string;
+    reason: string;
+    debitedAt?: string;
+  }) => {
+    if (currentUser?.role !== 'SUPER_ADMIN') {
+      showToast(
+        'Forbidden: administrator access is required for this action.',
+        'warning',
+      );
+      return false;
+    }
+
+    if (!amount || amount <= 0) {
+      showToast('Please enter a valid debit amount greater than 0.', 'warning');
+      return false;
+    }
+
+    const targetMember = members.find((m) => m.id === memberId);
+    if (!targetMember) {
+      showToast('Target member not found.', 'warning');
+      return false;
+    }
+
+    if (!targetMember.identityVerified) {
+      showToast(
+        `Debit rejected: Member ${targetMember.name} (${targetMember.id}) is UNVERIFIED. KYC must be APPROVED before wallet debit is permitted.`,
+        'warning',
+      );
+      return false;
+    }
+
+    const currentBal = targetMember.wallets[currency] || 0;
+    if (amount > currentBal) {
+      showToast(
+        `Insufficient funds: ${targetMember.name} has ${currency} ${currentBal.toLocaleString('en-US', { minimumFractionDigits: 2 })} available.`,
+        'warning',
+      );
+      return false;
+    }
+
+    const effectiveAt =
+      debitedAt && !Number.isNaN(Date.parse(debitedAt))
+        ? new Date(debitedAt)
+        : new Date();
+    const debitedAtIso = effectiveAt.toISOString();
+
+    if (authToken) {
+      const idempotencyKey = `idemp-debit-${targetMember.id}-${Date.now()}`;
+      void fetch('/admin/debit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          memberId: targetMember.id,
+          amountMinor: Math.round(amount * 100),
+          currency,
+          source: 'TEST',
+          reference,
+          reason: reason || 'Member wallet debit.',
+          idempotencyKey,
+          debitedAt: debitedAtIso,
+        }),
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}));
+            console.error('Server debit sync failed:', errBody);
+            return;
+          }
+          await fetchAdminDashboardStats(authToken);
+        })
+        .catch((e) => console.error('Server debit sync:', e));
+    }
+
+    setMembers((prev) =>
+      prev.map((m) => {
+        if (m.id === memberId) {
+          return {
+            ...m,
+            wallets: {
+              ...m.wallets,
+              [currency]: (m.wallets[currency] || 0) - amount,
+            },
+          };
+        }
+        return m;
+      }),
+    );
+
+    const dateFormatted = effectiveAt.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+
+    const newTx: Transaction = {
+      id: 'tx-' + Date.now(),
+      description: `Administrator debit (${reference})`,
+      date: dateFormatted,
+      timestamp: debitedAtIso,
+      status: 'Completed',
+      amount: -amount,
+      currency: currency,
+      type: 'admin_debit',
+      counterparty: 'Funding pool',
+      reference: reference,
+      category: 'Adjustment',
+    };
+    setTransactions((prev) => [newTx, ...prev]);
+
+    const newLedger: LedgerPosting = {
+      id: 'ledg-' + Date.now(),
+      reference: reference,
+      date: effectiveAt.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      }),
+      timestamp: debitedAtIso,
+      description: reason || 'Member wallet debit.',
+      currency: currency,
+      debitAccount: `Member wallet (${currency})`,
+      debitAmount: amount,
+      creditAccount: 'Funding pool',
+      creditAmount: amount,
+      memberId: targetMember.id,
+      memberName: targetMember.name,
+      adminActor: 'Admin Operator (LF-ADM-01)',
+    };
+    setLedgerPostings((prev) => [newLedger, ...prev]);
+
+    logAudit(
+      'ADMIN_DEBIT_WALLET',
+      `${targetMember.name} (${targetMember.id})`,
+      reference,
+      `Debited ${currency === 'USD' ? '$' : currency === 'CAD' ? 'C$' : currency === 'GBP' ? '£' : '€'}${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} from wallet via ${source}. Reason: ${reason}`,
+    );
+
+    showToast(
+      `Successfully debited ${currency} ${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} from ${targetMember.name}'s wallet.`,
+      'success',
+    );
+
+    return true;
+  };
+
   // Send Money (Member action) — durable server transfer, then refresh wallet
   const sendTransfer = async ({
     recipient,
@@ -2764,6 +2936,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         showToast,
         dismissToast,
         fundWallet,
+        debitWallet,
         sendTransfer,
         // Virtual Cards State & API Methods
         virtualCards,

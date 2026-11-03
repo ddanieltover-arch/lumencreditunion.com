@@ -3,6 +3,8 @@ import {
   PostLedgerTransactionSchema,
   AdminFundWalletInput,
   AdminFundWalletSchema,
+  AdminDebitWalletInput,
+  AdminDebitWalletSchema,
   WalletTransactionQuery,
   WalletTransactionQuerySchema,
   assertValidMinorUnits,
@@ -520,10 +522,16 @@ export class LedgerService {
     await this.persistNow();
 
     // Record audit log
+    const postedAction =
+      record.transactionType === 'ADMIN_DEBIT'
+        ? 'ADMIN_DEBIT_WALLET'
+        : record.transactionType === 'TRANSFER'
+          ? 'MEMBER_TRANSFER'
+          : 'ADMIN_FUND_WALLET';
     await this.auditService.record({
       actorId,
       actorRole,
-      action: isPendingApproval ? 'ADMIN_CREATE_PENDING_TRANSACTION' : 'ADMIN_FUND_WALLET',
+      action: isPendingApproval ? 'ADMIN_CREATE_PENDING_TRANSACTION' : postedAction,
       targetType: 'LEDGER_TRANSACTION',
       targetId: record.id,
       beforeState: null,
@@ -533,6 +541,7 @@ export class LedgerService {
         currency: record.currency,
         source: record.source,
         status: record.status,
+        transactionType: record.transactionType,
       },
       ipAddress,
     });
@@ -673,6 +682,150 @@ export class LedgerService {
         reference: tx.reference,
         reason: validated.reason,
         fundedAt: fundedAtDisplay,
+      });
+    }
+
+    return tx;
+  }
+
+  /**
+   * Admin debit / clawback: DEBIT member wallet, CREDIT funding pool (reverse of funding).
+   * Rejects unverified members and insufficient balance.
+   */
+  async adminDebitMemberWallet(
+    input: AdminDebitWalletInput,
+    adminId: string,
+    ipAddress: string,
+  ): Promise<LedgerTransactionRecord> {
+    await this.ensureReady();
+    if (this.kycService) {
+      await this.kycService.ensureReady();
+    }
+    const validated = AdminDebitWalletSchema.parse(input);
+    const memberForKyc = this.authService?.getUserById(validated.memberId);
+
+    if (
+      this.kycService &&
+      !this.kycService.isMemberKycApproved(validated.memberId, memberForKyc?.email)
+    ) {
+      const err: any = new Error(
+        `Cannot debit unverified member ${validated.memberId}. Member identity verification (KYC) must be APPROVED.`,
+      );
+      err.statusCode = 403;
+      throw err;
+    }
+
+    let amountMinor = validated.amountMinor;
+    if (amountMinor === undefined && validated.amount !== undefined) {
+      amountMinor = parseMajorToMinor(validated.amount.toString(), validated.currency).amountMinor;
+    }
+    if (!amountMinor || amountMinor <= 0) {
+      const err: any = new Error('Debit amount must be greater than zero.');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const idempotencyKey =
+      validated.idempotencyKey || `idemp-debit-${validated.memberId}-${Date.now()}`;
+
+    if (this.idempotencyStore.has(idempotencyKey)) {
+      return this.idempotencyStore.get(idempotencyKey)!;
+    }
+
+    const isSandbox = this.configService.isSandbox;
+    const source: TransactionSource = isSandbox
+      ? 'TEST'
+      : (validated.source as TransactionSource) || 'REVERSAL';
+    const reference =
+      validated.reference || `TX-DBT-${Date.now().toString(36).toUpperCase()}`;
+
+    const systemPool =
+      this.accounts.get(`system-pool-${validated.currency.toLowerCase()}`) ||
+      this.accounts.get('00000000-0000-0000-0000-000000000001')!;
+    const memberWallet = this.getOrCreateMemberWallet(
+      validated.memberId,
+      validated.currency,
+    );
+
+    if (memberWallet.cachedBalanceMinor < amountMinor) {
+      const available = formatMoney({
+        amountMinor: memberWallet.cachedBalanceMinor,
+        currency: validated.currency,
+      });
+      const requested = formatMoney({
+        amountMinor,
+        currency: validated.currency,
+      });
+      const err: any = new Error(
+        `Insufficient funds: member wallet has ${available} but debit requires ${requested}.`,
+      );
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const debitedAt =
+      typeof validated.debitedAt === 'string' && !Number.isNaN(Date.parse(validated.debitedAt))
+        ? new Date(validated.debitedAt).toISOString()
+        : new Date().toISOString();
+
+    const tx = await this.postTransaction(
+      {
+        idempotencyKey,
+        reference,
+        transactionType: 'ADMIN_DEBIT',
+        description: `Admin Wallet Debit: ${validated.reason}`,
+        currency: validated.currency,
+        source,
+        metadata: {
+          reason: validated.reason,
+          memberId: validated.memberId,
+          debitSource: isSandbox ? 'Test debit (sandbox)' : validated.source || 'Admin adjustment',
+          sandboxMode: isSandbox,
+          debitedAt,
+        },
+        entries: [
+          {
+            accountId: memberWallet.id,
+            accountType: 'MEMBER_WALLET',
+            direction: 'DEBIT',
+            amountMinor,
+            currency: validated.currency,
+          },
+          {
+            accountId: systemPool.id,
+            accountType: 'SANDBOX_FUNDING_POOL',
+            direction: 'CREDIT',
+            amountMinor,
+            currency: validated.currency,
+          },
+        ],
+      },
+      adminId,
+      'SUPER_ADMIN',
+      ipAddress,
+    );
+
+    const amountFormatted = formatMoney({
+      amountMinor,
+      currency: validated.currency,
+    });
+    const member = this.authService?.getUserById(validated.memberId);
+    const debitedAtDisplay = String(tx.metadata?.debitedAt || tx.createdAt || debitedAt);
+
+    if (tx.status === 'PENDING_APPROVAL') {
+      void this.emailService.sendAdminDualApprovalPendingEmail({
+        amountFormatted,
+        reference: tx.reference,
+        memberId: validated.memberId,
+        transactionId: tx.id,
+      });
+    } else if (member?.email) {
+      void this.emailService.sendWalletDebitedEmail(member.email, member.fullName, {
+        amountFormatted,
+        currency: validated.currency,
+        reference: tx.reference,
+        reason: validated.reason,
+        debitedAt: debitedAtDisplay,
       });
     }
 

@@ -6,6 +6,7 @@ import {
   Users,
   FileCheck,
   Coins,
+  ArrowDownFromLine,
   Landmark,
   BookOpen,
   History,
@@ -84,6 +85,7 @@ export const AdminPortal: React.FC = () => {
     setCurrentView,
     members,
     fundWallet,
+    debitWallet,
     ledgerPostings,
     recentFunding,
     auditLog,
@@ -161,6 +163,7 @@ export const AdminPortal: React.FC = () => {
     };
   }, [mobileNavOpen]);
   // "Fund a wallet" form state
+  const [ledgerAction, setLedgerAction] = useState<'credit' | 'debit'>('credit');
   const [selectedMemberId, setSelectedMemberId] = useState<string>('');
   const [amountStr, setAmountStr] = useState<string>('');
   const [currency, setCurrency] = useState<Currency>('USD');
@@ -419,10 +422,16 @@ export const AdminPortal: React.FC = () => {
   const currencySymbol =
     currency === 'USD' ? '$' : currency === 'CAD' ? 'C$' : currency === 'GBP' ? '£' : '€';
 
-  const handlePostCredit = (e: React.FormEvent) => {
+  const handlePostLedgerAction = (e: React.FormEvent) => {
     e.preventDefault();
+    const isDebit = ledgerAction === 'debit';
     if (!confirmed) {
-      showToast('Please confirm the test credit checkbox before submitting.', 'warning');
+      showToast(
+        isDebit
+          ? 'Please confirm the debit checkbox before submitting.'
+          : 'Please confirm the test credit checkbox before submitting.',
+        'warning',
+      );
       return;
     }
     if (parsedAmount <= 0) {
@@ -431,35 +440,62 @@ export const AdminPortal: React.FC = () => {
     }
 
     if (!currentMember) {
-      showToast('Select a member to fund.', 'warning');
+      showToast(isDebit ? 'Select a member to debit.' : 'Select a member to fund.', 'warning');
       return;
     }
 
     if (!fundedAtLocal.trim()) {
-      showToast('Please enter the date and time of funding.', 'warning');
+      showToast(
+        isDebit
+          ? 'Please enter the date and time of the debit.'
+          : 'Please enter the date and time of funding.',
+        'warning',
+      );
       return;
     }
-    const fundedAtDate = new Date(fundedAtLocal);
-    if (Number.isNaN(fundedAtDate.getTime())) {
-      showToast('Please enter a valid date and time of funding.', 'warning');
+    const effectiveAt = new Date(fundedAtLocal);
+    if (Number.isNaN(effectiveAt.getTime())) {
+      showToast('Please enter a valid date and time.', 'warning');
       return;
     }
 
-    const fundingRef =
-      reference.trim() || `REF-${Math.floor(1000 + Math.random() * 9000)}`;
+    if (isDebit) {
+      const bal = currentMember.wallets[currency] || 0;
+      if (parsedAmount > bal) {
+        showToast(
+          `Insufficient funds: ${currentMember.name} has ${currencySymbol}${bal.toLocaleString('en-US', { minimumFractionDigits: 2 })} available.`,
+          'warning',
+        );
+        return;
+      }
+    }
 
-    const success = fundWallet({
-      memberId: currentMember.id,
-      amount: parsedAmount,
-      currency,
-      source: fundingSource,
-      reference: fundingRef,
-      reason,
-      fundedAt: fundedAtDate.toISOString(),
-    });
+    const actionRef =
+      reference.trim() ||
+      `${isDebit ? 'DBT' : 'REF'}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    const success = isDebit
+      ? debitWallet({
+          memberId: currentMember.id,
+          amount: parsedAmount,
+          currency,
+          source: fundingSource,
+          reference: actionRef,
+          reason,
+          debitedAt: effectiveAt.toISOString(),
+        })
+      : fundWallet({
+          memberId: currentMember.id,
+          amount: parsedAmount,
+          currency,
+          source: fundingSource,
+          reference: actionRef,
+          reason,
+          fundedAt: effectiveAt.toISOString(),
+        });
 
     if (success) {
-      setReference(`REF-${Math.floor(1000 + Math.random() * 9000)}`);
+      setReference(`${isDebit ? 'DBT' : 'REF'}-${Math.floor(1000 + Math.random() * 9000)}`);
       setAmountStr('');
       setConfirmed(false);
       const d = new Date();
@@ -730,7 +766,8 @@ export const AdminPortal: React.FC = () => {
           {/* Header */}
           <div className="flex flex-col gap-1">
             <h1 className="font-display font-bold text-2xl sm:text-3xl text-[#0E1B1F] tracking-[-0.01em]">
-              {adminTab === 'fund_wallet' && 'Fund a wallet'}
+              {adminTab === 'fund_wallet' &&
+                (ledgerAction === 'debit' ? 'Debit a wallet' : 'Fund a wallet')}
               {adminTab === 'members' && 'Registered Members'}
               {adminTab === 'identity_reviews' && 'KYC Identity Review Queue'}
               {adminTab === 'loan_applications' && 'Credit & Underwriting Queue'}
@@ -741,7 +778,9 @@ export const AdminPortal: React.FC = () => {
             </h1>
             <span className="text-[15px] text-[#4A5B60]">
               {adminTab === 'fund_wallet' &&
-                'Every credit is posted to the ledger with a reference and recorded in the audit log.'}
+                (ledgerAction === 'debit'
+                  ? 'Every debit is posted as a balanced ledger entry and recorded in the audit log.'
+                  : 'Every credit is posted to the ledger with a reference and recorded in the audit log.')}
               {adminTab === 'members' && 'View member accounts, verified documents, and balances.'}
               {adminTab === 'identity_reviews' && 'Review uploaded passport and national ID scans.'}
               {adminTab === 'loan_applications' && 'Underwrite auto and mortgage loans with fund disbursement.'}
@@ -931,9 +970,38 @@ export const AdminPortal: React.FC = () => {
             <div className="flex flex-col lg:flex-row gap-5 items-start">
               {/* Left Column: The Interactive Form (Flex 3) */}
               <form
-                onSubmit={handlePostCredit}
+                onSubmit={handlePostLedgerAction}
                 className="w-full lg:flex-[3] min-w-0 bg-white border border-[#DCE5E3] rounded-3xl p-7 flex flex-col gap-5 shadow-xs"
               >
+                <div
+                  className="flex p-1 rounded-xl bg-[#F4F7F6] border border-[#DCE5E3] gap-1"
+                  role="group"
+                  aria-label="Ledger action"
+                >
+                  <button
+                    type="button"
+                    onClick={() => setLedgerAction('credit')}
+                    className={`flex-1 min-h-[44px] rounded-lg text-sm font-semibold transition cursor-pointer ${
+                      ledgerAction === 'credit'
+                        ? 'bg-[#0A3D3F] text-white shadow-xs'
+                        : 'text-[#4A5B60] hover:text-[#0E1B1F]'
+                    }`}
+                  >
+                    Credit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLedgerAction('debit')}
+                    className={`flex-1 min-h-[44px] rounded-lg text-sm font-semibold transition cursor-pointer ${
+                      ledgerAction === 'debit'
+                        ? 'bg-[#0A3D3F] text-white shadow-xs'
+                        : 'text-[#4A5B60] hover:text-[#0E1B1F]'
+                    }`}
+                  >
+                    Debit
+                  </button>
+                </div>
+
                 {/* Member Input & Lookup Selector */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
@@ -1122,10 +1190,12 @@ export const AdminPortal: React.FC = () => {
                   />
                 </div>
 
-                {/* Date and time of funding */}
+                {/* Date and time */}
                 <div className="flex flex-col gap-2">
                   <label htmlFor="f-funded-at" className="text-sm font-semibold text-[#0E1B1F]">
-                    Date and time of funding
+                    {ledgerAction === 'debit'
+                      ? 'Date and time of debit'
+                      : 'Date and time of funding'}
                   </label>
                   <input
                     id="f-funded-at"
@@ -1136,14 +1206,14 @@ export const AdminPortal: React.FC = () => {
                     className="min-h-[48px] border border-[#BCCAC8] rounded-xl px-3.5 text-[15px] text-[#0E1B1F] font-mono focus:outline-none focus:border-[#0A3D3F]"
                   />
                   <span className="text-[13px] text-[#4A5B60] leading-relaxed">
-                    Shown on the member wallet, ledger, and funding confirmation email.
+                    Shown on the member wallet, ledger, and confirmation email.
                   </span>
                 </div>
 
-                {/* Reason for Credit */}
+                {/* Reason */}
                 <div className="flex flex-col gap-2">
                   <label htmlFor="f-note" className="text-sm font-semibold text-[#0E1B1F]">
-                    Reason for credit
+                    {ledgerAction === 'debit' ? 'Reason for debit' : 'Reason for credit'}
                   </label>
                   <textarea
                     id="f-note"
@@ -1167,7 +1237,9 @@ export const AdminPortal: React.FC = () => {
                     htmlFor="f-confirm"
                     className="text-sm text-[#2B3B3F] leading-snug cursor-pointer select-none"
                   >
-                    I confirm this is a test credit and I understand it will be recorded under my admin account.
+                    {ledgerAction === 'debit'
+                      ? 'I confirm this debit will reduce the member wallet and be recorded under my admin account.'
+                      : 'I confirm this is a test credit and I understand it will be recorded under my admin account.'}
                   </label>
                 </div>
 
@@ -1177,7 +1249,7 @@ export const AdminPortal: React.FC = () => {
                     type="submit"
                     className="min-h-[50px] px-7 rounded-xl bg-[#0A3D3F] hover:bg-[#0F5557] text-white font-semibold text-[16px] transition-all cursor-pointer shadow-xs"
                   >
-                    Post credit to ledger
+                    {ledgerAction === 'debit' ? 'Post debit to ledger' : 'Post credit to ledger'}
                   </button>
                   <button
                     type="button"
@@ -1216,28 +1288,57 @@ export const AdminPortal: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        <tr className="border-b border-[#EDF2F1]">
-                          <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
-                            Funding pool
-                          </td>
-                          <td className="py-3 px-1.5 text-right font-mono font-semibold">
-                            {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-3 px-1.5 text-right font-mono text-[#4A5B60]">
-                            0.00
-                          </td>
-                        </tr>
-                        <tr>
-                          <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
-                            Member wallet ({currency})
-                          </td>
-                          <td className="py-3 px-1.5 text-right font-mono text-[#4A5B60]">
-                            0.00
-                          </td>
-                          <td className="py-3 px-1.5 text-right font-mono font-semibold text-[#0A5C47]">
-                            {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </td>
-                        </tr>
+                        {ledgerAction === 'debit' ? (
+                          <>
+                            <tr className="border-b border-[#EDF2F1]">
+                              <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
+                                Member wallet ({currency})
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono font-semibold">
+                                {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono text-[#4A5B60]">
+                                0.00
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
+                                Funding pool
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono text-[#4A5B60]">
+                                0.00
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono font-semibold text-[#0A5C47]">
+                                {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </>
+                        ) : (
+                          <>
+                            <tr className="border-b border-[#EDF2F1]">
+                              <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
+                                Funding pool
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono font-semibold">
+                                {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono text-[#4A5B60]">
+                                0.00
+                              </td>
+                            </tr>
+                            <tr>
+                              <td className="py-3 px-1.5 font-medium text-[#0E1B1F]">
+                                Member wallet ({currency})
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono text-[#4A5B60]">
+                                0.00
+                              </td>
+                              <td className="py-3 px-1.5 text-right font-mono font-semibold text-[#0A5C47]">
+                                {parsedAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          </>
+                        )}
                       </tbody>
                     </table>
                   </div>
@@ -1393,6 +1494,7 @@ export const AdminPortal: React.FC = () => {
                               type="button"
                               onClick={() => {
                                 setSelectedMemberId(m.id);
+                                setLedgerAction('credit');
                                 setAdminTab('fund_wallet');
                               }}
                               className="px-3 py-1.5 rounded-lg bg-[#F5B942] text-[#0A3D3F] text-xs font-bold hover:bg-[#E0A82E] shadow-sm inline-flex items-center gap-1"
@@ -1400,6 +1502,19 @@ export const AdminPortal: React.FC = () => {
                             >
                               <Coins className="w-3.5 h-3.5" />
                               Fund
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedMemberId(m.id);
+                                setLedgerAction('debit');
+                                setAdminTab('fund_wallet');
+                              }}
+                              className="px-3 py-1.5 rounded-lg bg-[#0A3D3F] text-white text-xs font-bold hover:bg-[#0F5557] shadow-sm inline-flex items-center gap-1"
+                              title="Debit this member wallet"
+                            >
+                              <ArrowDownFromLine className="w-3.5 h-3.5" />
+                              Debit
                             </button>
                           </div>
                         </td>

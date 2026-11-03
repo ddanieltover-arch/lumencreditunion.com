@@ -183,6 +183,7 @@ describe('Double-Entry Ledger & Platform Rules', () => {
 
   it('ACCEPTANCE CRITERIA: Funding an unverified member is rejected', async () => {
     const mockKycService = {
+      ensureReady: async () => undefined,
       isMemberKycApproved: (id: string) => id === 'verified-member-uuid',
     } as any;
 
@@ -218,6 +219,99 @@ describe('Double-Entry Ledger & Platform Rules', () => {
 
     expect(tx.status).toBe('POSTED');
     expect(tx.entries).toHaveLength(2);
+  });
+
+  it('admin debit posts reverse entries and reduces member wallet balance', async () => {
+    const memberId = 'debit-member-uuid';
+    await ledgerService.adminFundMemberWallet(
+      {
+        memberId,
+        amountMinor: 50000,
+        currency: 'USD',
+        reason: 'Seed balance for debit test',
+        idempotencyKey: 'idemp-debit-seed-1',
+      },
+      '00000000-0000-0000-0000-000000000099',
+      '127.0.0.1',
+    );
+
+    const debitTx = await ledgerService.adminDebitMemberWallet(
+      {
+        memberId,
+        amountMinor: 15000,
+        currency: 'USD',
+        reason: 'Admin clawback test',
+        idempotencyKey: 'idemp-debit-ok-1',
+      },
+      '00000000-0000-0000-0000-000000000099',
+      '127.0.0.1',
+    );
+
+    expect(debitTx.status).toBe('POSTED');
+    expect(debitTx.transactionType).toBe('ADMIN_DEBIT');
+    expect(debitTx.source).toBe('TEST');
+    expect(debitTx.entries).toHaveLength(2);
+    const memberDebit = debitTx.entries.find(
+      (e) => e.accountType === 'MEMBER_WALLET' && e.direction === 'DEBIT',
+    );
+    const poolCredit = debitTx.entries.find(
+      (e) => e.accountType === 'SANDBOX_FUNDING_POOL' && e.direction === 'CREDIT',
+    );
+    expect(memberDebit?.amountMinor).toBe(15000);
+    expect(poolCredit?.amountMinor).toBe(15000);
+
+    expect(ledgerService.getMemberBalance(memberId, 'USD')).toBe(35000);
+  });
+
+  it('admin debit rejects insufficient funds', async () => {
+    const memberId = 'debit-insufficient-member';
+    await ledgerService.adminFundMemberWallet(
+      {
+        memberId,
+        amountMinor: 1000,
+        currency: 'USD',
+        reason: 'Small seed',
+        idempotencyKey: 'idemp-debit-seed-small',
+      },
+      '00000000-0000-0000-0000-000000000099',
+      '127.0.0.1',
+    );
+
+    await expect(
+      ledgerService.adminDebitMemberWallet(
+        {
+          memberId,
+          amountMinor: 5000,
+          currency: 'USD',
+          reason: 'Overdraw attempt',
+          idempotencyKey: 'idemp-debit-overdraw',
+        },
+        '00000000-0000-0000-0000-000000000099',
+        '127.0.0.1',
+      ),
+    ).rejects.toThrow(/Insufficient funds/i);
+  });
+
+  it('admin debit rejects unverified members', async () => {
+    const mockKycService = {
+      ensureReady: async () => undefined,
+      isMemberKycApproved: (id: string) => id === 'verified-debit-member',
+    } as any;
+    const kycGuardedLedger = new LedgerService(configService, auditService, mockKycService);
+
+    await expect(
+      kycGuardedLedger.adminDebitMemberWallet(
+        {
+          memberId: 'unverified-debit-member',
+          amountMinor: 1000,
+          currency: 'USD',
+          reason: 'Debit unverified',
+          idempotencyKey: 'idemp-debit-unverified',
+        },
+        '00000000-0000-0000-0000-000000000099',
+        '127.0.0.1',
+      ),
+    ).rejects.toThrow(/Cannot debit unverified member/i);
   });
 
   it('ACCEPTANCE CRITERIA: Concurrent funding and spending tests never produce a negative or mismatched balance', async () => {

@@ -50,6 +50,36 @@ export function walletFundedEmail(
   });
 }
 
+export function walletDebitedEmail(
+  base: Base,
+  details: {
+    amountFormatted: string;
+    currency: string;
+    reference: string;
+    reason?: string;
+    debitedAt?: string;
+  },
+): RenderedEmail {
+  const debitedAtLabel = formatFundedAt(details.debitedAt);
+  return buildEmail('Your Lumenfield wallet was debited', {
+    ...base,
+    preheader: `${details.amountFormatted} debited from your ${details.currency} wallet.`,
+    headline: 'Wallet debited',
+    greetingName: base.fullName,
+    paragraphs: [
+      `An administrator debited ${details.amountFormatted} from your ${details.currency} wallet.`,
+    ],
+    details: [
+      { label: 'Amount', value: details.amountFormatted },
+      { label: 'Currency', value: details.currency },
+      { label: 'Reference', value: details.reference },
+      ...(debitedAtLabel ? [{ label: 'Debited at', value: debitedAtLabel }] : []),
+      ...(details.reason ? [{ label: 'Reason', value: details.reason }] : []),
+    ],
+    cta: { label: 'View wallet', url: `${base.appUrl}/` },
+  });
+}
+
 export function dualApprovalPostedEmail(
   base: Base,
   details: { amountFormatted: string; reference: string; fundedAt?: string },

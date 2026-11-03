@@ -74,6 +74,7 @@ export interface Transaction {
   currency: Currency;
   type:
     | 'admin_credit'
+    | 'admin_debit'
     | 'transfer_out'
     | 'transfer_in'
     | 'bank_transfer'

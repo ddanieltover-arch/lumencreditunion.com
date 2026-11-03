@@ -95,6 +95,27 @@ export const AdminFundWalletSchema = z.object({
 });
 export type AdminFundWalletInput = z.infer<typeof AdminFundWalletSchema>;
 
+/** Admin clawback / debit of a member wallet (reverse of funding). */
+export const AdminDebitWalletSchema = z.object({
+  memberId: z.string().min(1, 'memberId is required'),
+  amountMinor: z.number().int().positive('Amount must be positive integer minor units').optional(),
+  amount: z.union([z.number(), z.string()]).optional(),
+  currency: z.enum(['USD', 'CAD', 'GBP', 'EUR']),
+  reason: z.string().min(3).max(255),
+  idempotencyKey: z.string().min(6).optional(),
+  reference: z.string().optional(),
+  source: z.string().optional(),
+  confirmed: z.boolean().optional(),
+  /** Admin-entered effective debit time (ISO-8601). Defaults to post time when omitted. */
+  debitedAt: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || !Number.isNaN(Date.parse(v)), {
+      message: 'debitedAt must be a valid date/time',
+    }),
+});
+export type AdminDebitWalletInput = z.infer<typeof AdminDebitWalletSchema>;
+
 /** Member-initiated request for wallet funding (admin credits after review). */
 export const CreateFundingRequestSchema = z.object({
   amount: z.union([z.number(), z.string().min(1)]),

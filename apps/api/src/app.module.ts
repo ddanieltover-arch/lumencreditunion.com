@@ -17,6 +17,7 @@ import { KycService } from './kyc/kyc.service';
 import { KycController } from './kyc/kyc.controller';
 import {
   AdminFundWalletSchema,
+  AdminDebitWalletSchema,
   CreateFundingRequestSchema,
   ReviewFundingRequestSchema,
   WalletTransferSchema,
@@ -591,6 +592,33 @@ export function createApiApp(
     requireRole(['SUPER_ADMIN']),
     validateZod(AdminFundWalletSchema),
     handleAdminFunding,
+  );
+
+  const handleAdminDebit = async (req: Request, res: Response, next: any) => {
+    await ledgerService.ensureReady();
+    try {
+      const ip = (req.ip || '127.0.0.1').toString();
+      const tx = await ledgerService.adminDebitMemberWallet(req.body, req.user!.id, ip);
+      res.status(201).json(tx);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  app.post(
+    '/admin/debit',
+    authenticateJwt,
+    requireRole(['SUPER_ADMIN']),
+    validateZod(AdminDebitWalletSchema),
+    handleAdminDebit,
+  );
+
+  app.post(
+    '/admin/debit-wallet',
+    authenticateJwt,
+    requireRole(['SUPER_ADMIN']),
+    validateZod(AdminDebitWalletSchema),
+    handleAdminDebit,
   );
 
   // Dual-control approval for transactions pending second approver (HARD RULE 5)

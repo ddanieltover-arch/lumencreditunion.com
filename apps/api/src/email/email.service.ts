@@ -262,6 +262,23 @@ export class EmailService {
     );
   }
 
+  async sendWalletDebitedEmail(
+    to: string,
+    fullName: string,
+    details: {
+      amountFormatted: string;
+      currency: string;
+      reference: string;
+      reason?: string;
+      debitedAt?: string;
+    },
+  ) {
+    return this.deliver(
+      to,
+      walletTpl.walletDebitedEmail(this.base(fullName), details),
+    );
+  }
+
   async sendDualApprovalPostedEmail(
     to: string,
     fullName: string,

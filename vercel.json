@@ -39,6 +39,8 @@
     { "source": "/admin/funding-requests", "destination": { "service": "api" } },
     { "source": "/admin/funding-requests/(.*)", "destination": { "service": "api" } },
     { "source": "/admin/fund-wallet", "destination": { "service": "api" } },
+    { "source": "/admin/debit", "destination": { "service": "api" } },
+    { "source": "/admin/debit-wallet", "destination": { "service": "api" } },
     { "source": "/admin/audit-logs", "destination": { "service": "api" } },
     { "source": "/admin/ledger/(.*)", "destination": { "service": "api" } },
     { "source": "/admin/kyc/(.*)", "destination": { "service": "api" } },
