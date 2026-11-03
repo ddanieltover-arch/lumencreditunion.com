@@ -526,7 +526,7 @@ export class LedgerService {
       record.transactionType === 'ADMIN_DEBIT'
         ? 'ADMIN_DEBIT_WALLET'
         : record.transactionType === 'TRANSFER'
-          ? 'MEMBER_TRANSFER'
+          ? 'MEMBER_TRANSFER_POSTED'
           : 'ADMIN_FUND_WALLET';
     await this.auditService.record({
       actorId,
